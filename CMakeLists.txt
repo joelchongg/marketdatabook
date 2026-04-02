@@ -16,6 +16,14 @@ set(MarketDataBook_FLAGS
     "-Werror"
 )
 
+# Fetch external libraries used
+include(FetchContent)
+FetchContent_Declare(
+    abseil-cpp
+    GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+)
+FetchContent_MakeAvailable(abseil-cpp)
+
 # Create the main executable
 add_executable(matching_engine src/main.cpp)
 
@@ -24,3 +32,4 @@ target_compile_options(matching_engine PRIVATE ${MarketDataBook_FLAGS})
 
 # Tell CMake where to find our header files so we can use clean #include paths
 target_include_directories(matching_engine PRIVATE src)
+target_link_libraries(matching_engine PRIVATE absl::flat_hash_map)
