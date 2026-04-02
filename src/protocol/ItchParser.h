@@ -1,7 +1,8 @@
 #pragma once
 
+#include "utils/spscqueue.h"
+
 #include <cstdint>
-#include <iostream> // for debugging
 
 namespace protocol {
 
@@ -19,12 +20,15 @@ struct AddOrder {
     uint32_t price;
 } __attribute__((packed));
 
+template <size_t QUEUE_SIZE>
 class ItchParser {
 public:
+    ItchParser(utils::SPSCQueue<protocol::AddOrder, QUEUE_SIZE>& queue)
+        : queue_ { queue }
+    { }
+
     int on_data(int connection_fd, void* data, int bytes_available) {
         if (bytes_available < 36) { // equivalent to the size of an AddOrder struct
-            // debugging
-            std::cout << "Not enough bytes in data\n";
             return 0;
         }
 
@@ -34,14 +38,12 @@ public:
         new_order->shares = __builtin_bswap32(new_order->shares);
         new_order->price = __builtin_bswap32(new_order->price);
 
-        // debugging
-        std::cout << "New Order Reference Number: " << new_order->order_reference_number << '\n';
-        std::cout << "New Order Shares: " << new_order->shares << '\n';
-        std::cout << "New Order Price: " << new_order->price << '\n';
-        std::cout << "For file descriptor: " << connection_fd << '\n';
-
+        queue_.push(std::move(*new_order));
         return 36;
     }
+
+private:
+    utils::SPSCQueue<AddOrder, QUEUE_SIZE>& queue_;
 };
 
 } // namespace protocol

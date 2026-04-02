@@ -1,11 +1,10 @@
 #pragma once
 
-#include "src/protocol/ItchParser.h"
+#include "protocol/ItchParser.h"
 
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <iostream> // for debugging
 #include<stdexcept>
 #include <vector>
 
@@ -52,7 +51,7 @@ public:
     void add_order(const protocol::AddOrder& parsed_order) {
         if (next_free_index_ == NULL_INDEX) {
             // can fall back to reallocation if needed during actual execution
-            std::cout << "Pool is fully utilized, unable to add more orders.\n";
+            return;
         }
 
         // retrieve new order
