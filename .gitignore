@@ -1,0 +1,4 @@
+.clangd
+
+# Ignore build outputs for now
+/build
