@@ -3,6 +3,10 @@
 #include "utils/spscqueue.h"
 
 #include <cstdint>
+#include <cstring>
+
+#include <iostream> // for debugging
+#include <bitset>
 
 namespace protocol {
 
@@ -38,7 +42,16 @@ public:
         new_order->shares = __builtin_bswap32(new_order->shares);
         new_order->price = __builtin_bswap32(new_order->price);
 
+        uint64_t timestamp_nbo;
+        std::memcpy(&timestamp_nbo, new_order->timestamp, 8);
+        timestamp_nbo = (__builtin_bswap64(timestamp_nbo) >> 16);
+        std::memcpy(new_order->timestamp, &timestamp_nbo, 6);
+
         queue_.push(std::move(*new_order));
+
+        // do to avoid unused parameter warning for now
+        std::cout << "Processing connection_fd: " << connection_fd << '\n';
+
         return 36;
     }
 
