@@ -118,6 +118,9 @@ public:
         }
     }
 
+    size_t get_best_bid() const { return bids_bitset_.get_best_bid(); }
+    size_t get_best_offer() const { return asks_bitset_.get_best_offer(); }
+
 private:
     constexpr static uint32_t NULL_INDEX = 0xFFFFFFFF; // signifies nullptr for the index "pointers"
     constexpr static int MAX_TICKS = 100000; // should be adjusted

@@ -25,7 +25,7 @@ static_assert(MAX_TICKS <= 262144, "HierarchicalBitset cannot handle above 64^3 
 public:
     HierarchicalBitset() = default;
 
-    size_t get_best_offer() {
+    size_t get_best_offer() const {
         if (third_level_ == 0) return -1;
 
         uint64_t second_level_idx = __builtin_clzll(third_level_);
@@ -35,7 +35,7 @@ public:
         return actual_idx + (first_level_idx << 6) + (second_level_idx << 12);
     }
 
-    size_t get_best_bid() {
+    size_t get_best_bid() const {
         if (third_level_ == 0) return -1;
 
         uint64_t second_level_idx = 63 - __builtin_ctzll(third_level_);

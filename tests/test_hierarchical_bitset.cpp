@@ -4,8 +4,7 @@
 #include <set>
 #include <random>
 
-TEST_CASE("Hierarchical Bitset: Test") {
-    // 1. Initialize your data structures
+TEST_CASE("Hierarchical Bitset Test") {
     utils::HierarchicalBitset<100000> bitset;
     std::set<size_t> st;
 
