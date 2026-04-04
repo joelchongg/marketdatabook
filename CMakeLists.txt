@@ -24,12 +24,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(abseil-cpp)
 
+add_library(market_data_core INTERFACE)
+target_include_directories(market_data_core INTERFACE src)
+target_link_libraries(market_data_core INTERFACE absl::flat_hash_map)
+target_compile_options(market_data_core INTERFACE ${MarketDataBook_FLAGS})
+
 # Create the main executable
 add_executable(matching_engine src/main.cpp)
 
-# Apply the flags to our executable
-target_compile_options(matching_engine PRIVATE ${MarketDataBook_FLAGS})
+# Link the core library
+target_link_libraries(matching_engine PRIVATE market_data_core)
 
-# Tell CMake where to find our header files so we can use clean #include paths
-target_include_directories(matching_engine PRIVATE src)
-target_link_libraries(matching_engine PRIVATE absl::flat_hash_map)
+# For testing
+enable_testing()
+add_subdirectory(tests)
