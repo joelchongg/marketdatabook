@@ -9,8 +9,15 @@
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
+#include "protocol/OrderTypes.h"
+#include "utils/HierarchicalBitset.h"
 
 namespace book {
+
+enum class Side {
+    Buy,
+    Sell
+};
 
 struct Order {
     uint64_t order_reference_number;
@@ -45,15 +52,88 @@ public:
         next_free_index_ = 0;
 
         // Initialize book
-        book_.fill({NULL_INDEX, NULL_INDEX});
+        bids_.fill({NULL_INDEX, NULL_INDEX});
+        asks_.fill({NULL_INDEX, NULL_INDEX});
     }
 
-    void add_order(const protocol::AddOrder& parsed_order) {
+    void add_order(const protocol::NormalizedAddOrder& parsed_order) {
+        if (parsed_order.price >= MAX_TICKS) {
+            // corrupted data
+            return;
+        }
+
         if (next_free_index_ == NULL_INDEX) {
             // can fall back to reallocation if needed during actual execution
             return;
         }
 
+        if (parsed_order.indicator == 'B') {
+            add_order_impl<Side::Buy>(parsed_order);
+        } else {
+            add_order_impl<Side::Sell>(parsed_order);
+        }
+    }
+
+    void cancel_order(uint64_t order_id) {
+        auto it = orders_.find(order_id);
+        if (it == orders_.end()) {
+            // order does not exist
+            return;
+        }
+
+        uint32_t tagged_order_idx = it->second;
+        uint32_t order_idx = tagged_order_idx & INDEX_MASK;
+        bool is_sell = (tagged_order_idx & SIDE_MASK) != 0;
+
+        Order& order = pool_[order_idx];
+        if (is_sell) {
+            release_order_to_pool<Side::Sell>(order, order_idx);
+        } else {
+            release_order_to_pool<Side::Buy>(order, order_idx);
+        }
+    }
+
+    void execute_order(protocol::NormalizedOrderExecuted& order) {
+        auto it = orders_.find(order.order_reference_number);
+        if (it == orders_.end()) {
+            return;
+        }
+
+        uint32_t tagged_order_idx = it->second;
+        uint32_t order_idx = tagged_order_idx & INDEX_MASK;
+        bool is_sell = (tagged_order_idx & SIDE_MASK) != 0;
+        Order& curr_order = pool_[order_idx];
+
+        if (curr_order.shares < order.shares) {
+            throw std::runtime_error("Current order has less shares than required from execute order");
+        }
+
+        curr_order.shares -= order.shares;
+        if (curr_order.shares == 0) {
+            if (is_sell) {
+                release_order_to_pool<Side::Sell>(curr_order, order_idx);
+            } else {
+                release_order_to_pool<Side::Buy>(curr_order, order_idx);
+            }
+        }
+    }
+
+private:
+    constexpr static uint32_t NULL_INDEX = 0xFFFFFFFF; // signifies nullptr for the index "pointers"
+    constexpr static int MAX_TICKS = 100000; // should be adjusted
+    constexpr static uint32_t SIDE_MASK = 1U << 31;
+    constexpr static uint32_t INDEX_MASK = ~SIDE_MASK;
+
+    std::vector<Order> pool_; // free list of order objects
+    std::array<PriceLevel, MAX_TICKS> bids_{}; // bid orders for each price level
+    std::array<PriceLevel, MAX_TICKS> asks_{}; // sell orders for each price level
+    absl::flat_hash_map<uint64_t, uint32_t> orders_;
+    utils::HierarchicalBitset<MAX_TICKS> bids_bitset_{};
+    utils::HierarchicalBitset<MAX_TICKS> asks_bitset_{};
+    uint32_t next_free_index_ = 0; // keeps track of the free order objects within the pool
+
+    template <Side side>
+    void add_order_impl(const protocol::NormalizedAddOrder& order) {
         // retrieve new order
         uint32_t new_order_idx = next_free_index_;
         next_free_index_ = pool_[next_free_index_].next;
@@ -61,15 +141,29 @@ public:
         Order& new_order = pool_[new_order_idx];
 
         // set new order values from parsed order
-        new_order.order_reference_number = parsed_order.order_reference_number;
-        new_order.shares = parsed_order.shares;
-        new_order.price = parsed_order.price;
+        new_order.order_reference_number = order.order_reference_number;
+        new_order.price = order.price;
+        new_order.shares = order.shares;
 
-        // insert order into current orders flat map
-        orders_[new_order.order_reference_number] = new_order_idx;
+        // add order to current orders
+        // use the 31st bit to represent the side for cancel / execute orders
+        constexpr uint32_t tagged_idx = side == Side::Buy ? 0 : (1U << 31);
+        orders_[new_order.order_reference_number] = tagged_idx | new_order_idx;
 
-        // update price level for new order
-        PriceLevel& price_level = book_[new_order.price];
+        // Update Price level for new order based on side
+        if constexpr (side == Side::Buy) {
+            PriceLevel& price_level = bids_[new_order.price];
+            add_update_price_level(price_level, new_order, new_order_idx);
+            bids_bitset_.set_price_level(new_order.price); // update hierarchical bitset
+        } else {
+            PriceLevel& price_level = asks_[new_order.price];
+            add_update_price_level(price_level, new_order, new_order_idx);
+            asks_bitset_.set_price_level(new_order.price); // update hierarchical bitset
+        }
+    }
+
+    // Updates price level for adding new orders
+    void add_update_price_level(PriceLevel& price_level, Order& new_order, uint32_t new_order_idx) {
         new_order.prev = NULL_INDEX;
         new_order.next = NULL_INDEX;
 
@@ -84,16 +178,9 @@ public:
         price_level.tail = new_order_idx;
     }
 
-    void cancel_order(uint64_t order_id) {
-        if (!orders_.contains(order_id)) {
-            // order does not exist
-            return;
-        }
-
-        uint32_t order_idx = orders_[order_id];
-
-        // update list of orders at that price level in the pool
-        Order& order = pool_[order_idx];
+    template <Side side>
+    void release_order_to_pool(Order& order, uint32_t order_idx) {
+        // Update Neighbours at price level
         if (order.prev != NULL_INDEX) {
             pool_[order.prev].next = order.next;
         }
@@ -102,31 +189,39 @@ public:
             pool_[order.next].prev = order.prev;
         }
 
-        // update head and tail of PriceLevel if necessary
-        PriceLevel& price_level = book_[order.price];
-        if (price_level.head == order_idx) {
-            price_level.head = order.next;
-        }
-        if (price_level.tail == order_idx) {
-            price_level.tail = order.prev;
-        }
+        // Update Price Level
+        if constexpr (side == Side::Buy) {
+            PriceLevel& price_level = bids_[order.price];
+            execute_update_price_level(price_level, order, order_idx);
 
-        // Remove order from current orders
-        orders_.erase(order_id);
+            if (price_level.head == NULL_INDEX) {
+                bids_bitset_.clear_price_level(order.price);
+            }
+        } else {
+            PriceLevel& price_level = asks_[order.price];
+            execute_update_price_level(price_level, order, order_idx);
 
-        // Insert order back into free list
+            if (price_level.head == NULL_INDEX) {
+                asks_bitset_.clear_price_level(order.price);
+            }
+        }
+    
+        // Return object back to pool
+        orders_.erase(order.order_reference_number);
         order.next = next_free_index_;
         next_free_index_ = order_idx;
     }
 
-private:
-    constexpr static uint32_t NULL_INDEX = 0xFFFFFFFF; // signifies nullptr for the index "pointers"
-    constexpr static int MAX_TICKS = 1000; // should be adjusted
+    // Updates price level for release_order_to_pool
+    void execute_update_price_level(PriceLevel& price_level, Order& order, uint32_t order_idx) {
+        if (price_level.head == order_idx) {
+            price_level.head = order.next;
+        }
 
-    std::vector<Order> pool_; // free list of order objects
-    std::array<PriceLevel, MAX_TICKS> book_; // contains the orders for each price level
-    absl::flat_hash_map<uint64_t, uint32_t> orders_;
-    uint32_t next_free_index_ = 0; // keeps track of the free order objects within the pool
+        if (price_level.tail == order_idx) {
+            price_level.tail = order.prev;
+        }
+    }
 };
 
 } // namespace book
