@@ -4,6 +4,14 @@
 
 namespace protocol {
 
+// The header struct consists of all fields that are common to all order types
+struct Header {
+    uint64_t timestamp;
+    uint64_t order_reference_number;
+    uint16_t stock_locate;
+    uint16_t tracking_number;
+};
+
 // AddOrder Struct is used for NASDAQ Itch Parsing (Section 1.3.1)
 // https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/NQTVITCHSpecification.pdf
 struct AddOrder {
@@ -62,6 +70,16 @@ struct CancelOrder {
     uint64_t order_reference_number;
     uint32_t shares;
 } __attribute__((packed));
+
+// Same struct as CancelOrder, but with padding and in Host Byte Order
+// reordered to eliminate padding, message type not needed as it can be inferred
+struct NormalizedCancelOrder {
+    uint64_t timestamp;
+    uint64_t order_reference_number;
+    uint32_t shares;
+    uint16_t stock_locate;
+    uint16_t tracking_number;
+};
 
 static_assert(sizeof(AddOrder) == 36, "AddOrder is not packed into 36 bytes");
 static_assert(sizeof(OrderExecuted) == 31, "OrderExecuted is not packed into 31 bytes");
