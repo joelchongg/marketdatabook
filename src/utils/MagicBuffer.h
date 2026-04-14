@@ -72,31 +72,29 @@ public:
     MagicBuffer& operator=(const MagicBuffer&) = delete;
 
     // delete move semantics (for now, we only use it for SPSCQueue. If needed, enable move semantics)
-    MagicBuffer(MagicBuffer&&) = delete;
-    MagicBuffer& operator=(MagicBuffer&&) = delete;
-    // MagicBuffer(MagicBuffer&& other)
-    //     : start_ { std::exchange(other.start_, nullptr) }
-    //     , end_ { std::exchange(other.end_, nullptr) }
-    //     , aligned_capacity_ { other.aligned_capacity_ }
-    // { }
+    MagicBuffer(MagicBuffer&& other)
+        : start_ { std::exchange(other.start_, nullptr) }
+        , second_half_start_ { std::exchange(other.second_half_start_, nullptr) }
+        , aligned_capacity_ { other.aligned_capacity_ }
+    { }
 
-    // MagicBuffer& operator=(MagicBuffer&& other) {
-    //     if (this == &other) {
-    //         return *this;
-    //     }
+    MagicBuffer& operator=(MagicBuffer&& other) {
+        if (this == &other) {
+            return *this;
+        }
 
-    //     if (start_) {
-    //         munmap(start_, aligned_capacity_);
-    //         munmap(end_, aligned_capacity_);
-    //         close(fd_);
-    //     }
+        if (start_) {
+            munmap(start_, aligned_capacity_);
+            munmap(second_half_start_, aligned_capacity_);
+            close(fd_);
+        }
 
-    //     start_ = std::exchange(other.start_, nullptr);
-    //     end_ = std::exchange(other.end_, nullptr);
-    //     aligned_capacity_ = other.aligned_capacity_;
+        start_ = std::exchange(other.start_, nullptr);
+        second_half_start_ = std::exchange(other.second_half_start_, nullptr);
+        aligned_capacity_ = other.aligned_capacity_;
 
-    //     return *this;
-    // }
+        return *this;
+    }
 
     char* data() { return start_; }
     size_t capacity() { return aligned_capacity_; }
@@ -126,6 +124,12 @@ public:
     }
 
     char* get_write_location() { return write_head_; }
+
+    void reset() {
+        // since we are dealing with trivially copyable types, we can just reset the pointers
+        read_head_ = start_;
+        write_head_ = start_;
+    }
 
 private:
     char* start_;

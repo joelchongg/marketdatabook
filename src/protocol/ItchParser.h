@@ -1,12 +1,13 @@
 #pragma once
 
 #include "OrderTypes.h"
+#include "utils/MagicBuffer.h"
 #include "utils/spscqueue.h"
 
 #include <cstdint>
 #include <cstring>
+#include <iostream> // for debugging, remove eventually
 
-#include <iostream> // for debugging
 namespace protocol {
 
 template <typename T, size_t QUEUE_SIZE>
@@ -16,48 +17,52 @@ public:
         : queue_ { queue }
     { }
 
-    int on_data(int connection_fd, void* raw_data_buffer, int bytes_available) {
-        char* raw_data = reinterpret_cast<char *>(raw_data_buffer);
+    void on_data([[maybe_unused]] int connection_fd, utils::MagicBuffer& raw_data_buffer) {
+        while (true) {
+            char* raw_data = raw_data_buffer.get_read_head();
 
-        const char message_type = *raw_data;
+            // no more data left in the buffer
+            if (raw_data_buffer.read_space_left() == 0) {
+                return;
+            }
 
-        switch (message_type) {
-            case 'A': if (bytes_available < 36) return 0; break;
-            case 'E': if (bytes_available < 31) return 0; break;
-            case 'X': if (bytes_available < 23) return 0; break;
+            const char message_type = *raw_data;
+            int bytes_available = raw_data_buffer.read_space_left();
+            switch (message_type) {
+                case 'A': if (bytes_available < 36) return; break;
+                case 'E': if (bytes_available < 31) return; break;
+                case 'X': if (bytes_available < 23) return; break;
+                default: throw std::runtime_error("ItchParser: Current message type is not supported.");
+            }
+
+            Header header;
+
+            uint64_t ts = 0;
+            std::memcpy(&ts, raw_data + 5, 6);
+            header.timestamp = __builtin_bswap64(ts) >> 16;
+
+            std::memcpy(&header.order_reference_number, raw_data + 11, 8);
+            header.order_reference_number = __builtin_bswap64(header.order_reference_number);
+
+            std::memcpy(&header.stock_locate, raw_data + 1, 2);
+            header.stock_locate = __builtin_bswap16(header.stock_locate);
+
+            std::memcpy(&header.tracking_number, raw_data + 3, 2);
+            header.tracking_number = __builtin_bswap16(header.tracking_number);
+
+            switch (message_type) {
+                case 'A': parse_add_order(raw_data, header, raw_data_buffer); break;
+                case 'E': parse_executed_order(raw_data, header, raw_data_buffer); break;
+                case 'X': parse_cancel_order(raw_data, header, raw_data_buffer); break;
+                default: throw std::runtime_error("ItchParser: Current order type is not supported and cannot be parsed.");
+            }
         }
-
-        Header header;
-
-        uint64_t ts = 0;
-        std::memcpy(&ts, raw_data + 5, 6);
-        header.timestamp = __builtin_bswap64(ts) >> 16;
-
-        std::memcpy(&header.order_reference_number, raw_data + 11, 8);
-        header.order_reference_number = __builtin_bswap64(header.order_reference_number);
-
-        std::memcpy(&header.stock_locate, raw_data + 1, 2);
-        header.stock_locate = __builtin_bswap16(header.stock_locate);
-
-        std::memcpy(&header.tracking_number, raw_data + 3, 2);
-        header.tracking_number = __builtin_bswap16(header.tracking_number);
-        
-        // do to avoid unused parameter warning for now
-        std::cout << "Processing connection_fd: " << connection_fd << '\n';
-
-        switch (message_type) {
-            case 'A': return parse_add_order(raw_data, header);
-            case 'E': return parse_executed_order(raw_data, header);
-            case 'X': return parse_cancel_order(raw_data, header);
-            default: return 0;
-        }
-
     }
 
 private:
     utils::SPSCQueue<T, QUEUE_SIZE>& queue_;
 
-    int parse_add_order(const void* raw_data, Header& header) {
+    void parse_add_order(const void* raw_data, Header& header, utils::MagicBuffer& buffer) {
         const AddOrder* data = reinterpret_cast<const AddOrder*>(raw_data);
 
         NormalizedAddOrder new_order;
@@ -69,11 +74,10 @@ private:
         new_order.indicator = data->indicator;
 
         queue_.push(std::move(new_order));
-
-        return 36;
+        buffer.advance_read(36);
     }
 
-    int parse_executed_order(const void* raw_data, Header& header) {
+    void parse_executed_order(const void* raw_data, Header& header, utils::MagicBuffer& buffer) {
         const OrderExecuted* data = reinterpret_cast<const OrderExecuted*>(raw_data);
         
         // check if AVX instructions can be used
@@ -86,11 +90,10 @@ private:
         new_order.tracking_number = header.tracking_number;
 
         queue_.push(std::move(new_order));
-
-        return 31;
+        buffer.advance_read(31);
     }
 
-    int parse_cancel_order(const void* raw_data, Header& header) {
+    void parse_cancel_order(const void* raw_data, Header& header, utils::MagicBuffer& buffer) {
         const CancelOrder* data = reinterpret_cast<const CancelOrder*>(raw_data);
 
         NormalizedCancelOrder new_order;
@@ -101,8 +104,7 @@ private:
         new_order.tracking_number = header.tracking_number;
 
         queue_.push(std::move(new_order));
-
-        return 23;
+        buffer.advance_read(23);
     }
 };
 

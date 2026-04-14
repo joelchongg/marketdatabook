@@ -5,6 +5,7 @@
 #include "protocol/OrderTypes.h"
 #include "utils/spscqueue.h"
 
+#include <sys/eventfd.h>
 #include <thread>
 #include <variant>
 
@@ -69,17 +70,25 @@ int main() {
     utils::SPSCQueue<Orders, 4096> queue;
     book::LimitOrderBook book(1000);
 
+    utils::SPSCQueue<int, 1024> incoming_connections_queue;
+    int event_fd = eventfd(0, EFD_CLOEXEC);
+
+    if (event_fd == -1) {
+        std::cout << "Main: Could not create eventfd file descriptor. Error: " << strerror(errno) << '\n';
+        return -1;
+    }
 
     protocol::ItchParser parser{queue};
-    network::EpollReactor epoller { parser };
+    network::EpollReactor incoming_connections_thread { parser, incoming_connections_queue, event_fd, false };
+    network::EpollReactor epoller { parser, incoming_connections_queue, event_fd, true };
 
     epoller.add_socket(server.get_fd());
 
     // launch consumer thread
     std::thread consumer{consume<Orders, 4096>, std::ref(queue), std::ref(book)};
 
-    epoller.run(server);
-    
+    epoller.run();
+        
 
     return 0;
 }
