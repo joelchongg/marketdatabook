@@ -8,12 +8,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Set Compiler Flags
 set(MarketDataBook_FLAGS 
-    "-O3"
+    # "-O0" # Disable if not debugging
+    "-03"
     "-march=native"
     "-fno-strict-aliasing"  # Disable strict aliasing UB
     "-Wall"
     "-Wextra"
     "-Werror"
+    # "-g" # Disable if not debugging
 )
 
 # Fetch external libraries used

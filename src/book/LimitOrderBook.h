@@ -8,9 +8,10 @@
 #include<stdexcept>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "protocol/OrderTypes.h"
 #include "utils/HierarchicalBitset.h"
+#include "utils/MagicBuffer.h"
+#include "utils/StaticOrderMap.h"
 
 namespace book {
 
@@ -19,7 +20,8 @@ enum class Side {
     Sell
 };
 
-struct Order {
+// aligned to 32 bytes to avoid an order being partitioned between 2 cache lines
+struct alignas(32) Order {
     uint64_t order_reference_number;
     uint32_t shares;
     uint32_t price;
@@ -40,10 +42,16 @@ public:
             throw std::runtime_error("Max Orders should be a positive value.");
         }
 
-        // Initialize pool objects
-        pool_.resize(max_orders);
+        size_t bytes_needed = max_orders * sizeof(Order);
+        size_t page_aligned_bytes_needed = (bytes_needed + utils::PAGE_SIZE - 1) & ~(utils::PAGE_SIZE - 1);
+        void* pool_addr = mmap(NULL, page_aligned_bytes_needed, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
 
-        pool_[0].prev = NULL_INDEX;
+        if (pool_addr == MAP_FAILED) [[unlikely]] {
+            throw std::runtime_error("LimitOrderBook: Unable to mmap order pool. Error: " + std::string(strerror(errno)));
+        }
+
+        pool_ = static_cast<Order *>(pool_addr);
+
         for (size_t i = 1; i < max_orders; ++i) {
             pool_[i - 1].next = i;
         }
@@ -81,7 +89,7 @@ public:
             return;
         }
 
-        uint32_t tagged_order_idx = it->second;
+        uint32_t tagged_order_idx = it->pool_idx;
         uint32_t order_idx = tagged_order_idx & INDEX_MASK;
         bool is_sell = (tagged_order_idx & SIDE_MASK) != 0;
 
@@ -99,7 +107,7 @@ public:
             return;
         }
 
-        uint32_t tagged_order_idx = it->second;
+        uint32_t tagged_order_idx = it->pool_idx;
         uint32_t order_idx = tagged_order_idx & INDEX_MASK;
         bool is_sell = (tagged_order_idx & SIDE_MASK) != 0;
         Order& curr_order = pool_[order_idx];
@@ -127,10 +135,10 @@ private:
     constexpr static uint32_t SIDE_MASK = 1U << 31;
     constexpr static uint32_t INDEX_MASK = ~SIDE_MASK;
 
-    std::vector<Order> pool_; // free list of order objects
+    Order* pool_; // free list of order objects
     std::array<PriceLevel, MAX_TICKS> bids_{}; // bid orders for each price level
     std::array<PriceLevel, MAX_TICKS> asks_{}; // sell orders for each price level
-    absl::flat_hash_map<uint64_t, uint32_t> orders_;
+    utils::StaticOrderMap<2 << 21> orders_; // capacity of orders_ should be tuned to limit order book # of elements to enforce load factor of < 0.5
     utils::HierarchicalBitset<MAX_TICKS> bids_bitset_{};
     utils::HierarchicalBitset<MAX_TICKS> asks_bitset_{};
     uint32_t next_free_index_ = 0; // keeps track of the free order objects within the pool

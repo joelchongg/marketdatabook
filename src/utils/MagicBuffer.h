@@ -26,7 +26,7 @@ public:
             throw std::logic_error("Magic Buffer: Unable to create magic buffer of size 0");
         }
 
-        fd_ = memfd_create("", MFD_CLOEXEC);
+        fd_ = memfd_create("magicbuf", MFD_CLOEXEC);
         if (fd_ == -1) [[unlikely]] {
             throw std::runtime_error("Magic Buffer: Unable to create file descriptor for magic buffer. Error Code: " + std::string(strerror(errno)));
         }

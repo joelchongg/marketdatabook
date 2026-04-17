@@ -81,7 +81,7 @@ private:
 };
 
 TEST_CASE("Limit Order Book Test") {
-    book::LimitOrderBook lob(2000000);
+    book::LimitOrderBook lob(2'000'000);
     MockOrderBook test_book;
 
     std::vector<uint64_t> active_ids;
@@ -96,7 +96,7 @@ TEST_CASE("Limit Order Book Test") {
     uint64_t next_order_id = 1;
 
     SECTION("1,000,000 Random Operations") {
-        for (int i = 0; i < 1000000; ++i) {
+        for (int i = 0; i < 1'000'000; ++i) {
             int op = op_dist(rng);
 
             // force an add if book is empty so we have something to cancel/execute
