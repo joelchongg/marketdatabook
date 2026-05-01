@@ -1,8 +1,8 @@
 #pragma once
 
-#include "book/LimitOrderBook.h"
 #include "MagicBuffer.h"
 
+#include <cstdint>
 #include <sys/mman.h>
 #include <utility>
 
@@ -46,7 +46,7 @@ public:
         }
 
         map_ = reinterpret_cast<Bucket *>(map_addr);
-        end_ = reinterpret_cast<Bucket *>(static_cast<char *>(map_addr) + page_aligned_bytes_needed);
+        end_ = reinterpret_cast<Bucket *>(static_cast<char *>(map_addr) + bytes_needed);
         capacity_ = Capacity;
         mapped_bytes_ = page_aligned_bytes_needed;
     }
