@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Set Compiler Flags
 set(MarketDataBook_FLAGS 
     # "-O0" # Disable if not debugging
-    "-03"
+    "-O3"
     "-march=native"
     "-fno-strict-aliasing"  # Disable strict aliasing UB
     "-Wall"
@@ -19,16 +19,16 @@ set(MarketDataBook_FLAGS
 )
 
 # Fetch external libraries used
-include(FetchContent)
-FetchContent_Declare(
-    abseil-cpp
-    GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
-)
-FetchContent_MakeAvailable(abseil-cpp)
+# include(FetchContent)
+# FetchContent_Declare(
+#     abseil-cpp
+#     GIT_REPOSITORY https://github.com/abseil/abseil-cpp.git
+# )
+# FetchContent_MakeAvailable(abseil-cpp)
 
 add_library(market_data_core INTERFACE)
 target_include_directories(market_data_core INTERFACE src)
-target_link_libraries(market_data_core INTERFACE absl::flat_hash_map)
+# target_link_libraries(market_data_core INTERFACE absl::flat_hash_map) unused, switched to StaticOrderMap
 target_compile_options(market_data_core INTERFACE ${MarketDataBook_FLAGS})
 
 # Create the main executable
