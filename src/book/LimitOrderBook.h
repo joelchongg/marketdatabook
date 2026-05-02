@@ -134,13 +134,14 @@ private:
     constexpr static int MAX_TICKS = 100000; // should be adjusted
     constexpr static uint32_t SIDE_MASK = 1U << 31;
     constexpr static uint32_t INDEX_MASK = ~SIDE_MASK;
+    constexpr static size_t ORDER_MAP_SIZE = 2 << 21;
 
     Order* pool_; // free list of order objects
     std::array<PriceLevel, MAX_TICKS> bids_{}; // bid orders for each price level
     std::array<PriceLevel, MAX_TICKS> asks_{}; // sell orders for each price level
-    utils::StaticOrderMap<2 << 21> orders_; // capacity of orders_ should be tuned to limit order book # of elements to enforce load factor of < 0.5
-    utils::HierarchicalBitset<MAX_TICKS> bids_bitset_{};
-    utils::HierarchicalBitset<MAX_TICKS> asks_bitset_{};
+    alignas(64) utils::StaticOrderMap<ORDER_MAP_SIZE> orders_; // capacity of orders_ should be tuned to limit order book # of elements to enforce load factor of < 0.5
+    alignas(64) utils::HierarchicalBitset<MAX_TICKS> bids_bitset_{};
+    alignas(64) utils::HierarchicalBitset<MAX_TICKS> asks_bitset_{};
     uint32_t next_free_index_ = 0; // keeps track of the free order objects within the pool
 
     template <Side side>
