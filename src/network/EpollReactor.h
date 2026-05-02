@@ -24,7 +24,10 @@ template <HasOnDataMethod MessageHandler>
 class EpollReactor {
 public:
     EpollReactor(MessageHandler& handler, utils::SPSCQueue<int, 1024>& new_connections_queue, int event_fd, bool initialize_buffers) 
-        : handler_ { handler }, incoming_connections_ { new_connections_queue }, epoll_fd_ { epoll_create1(EPOLL_CLOEXEC) }, event_fd_ { event_fd } {
+        : handler_ { handler }
+        , incoming_connections_ { new_connections_queue }
+        , epoll_fd_ { epoll_create1(EPOLL_CLOEXEC) }
+        , event_fd_ { event_fd } {
         if (epoll_fd_ == -1) {
             throw std::runtime_error("EpollReactor: Unable to create epoll instance. Error: " + std::string(strerror(errno)));
         }

@@ -52,7 +52,7 @@ public:
     }
 
     ~StaticOrderMap() {
-        munmap(map_, mapped_bytes_);
+        if (map_) munmap(map_, mapped_bytes_);
     }
 
     // delete copy semantics

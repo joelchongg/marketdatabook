@@ -63,8 +63,8 @@ public:
     }
     
     ~MagicBuffer() noexcept {
-        munmap(start_, aligned_capacity_ * 2);
-        close(fd_);
+        if (start_ != nullptr) munmap(start_, aligned_capacity_ * 2);
+        if (fd_ != -1) close(fd_);
     }
 
     // disable copy semantics
