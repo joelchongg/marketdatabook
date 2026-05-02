@@ -2,6 +2,7 @@
 
 #include "OrderTypes.h"
 #include "utils/MagicBuffer.h"
+#include "utils/MmapLogger.h"
 #include "utils/spscqueue.h"
 
 #include <cstdint>
@@ -15,6 +16,7 @@ class ItchParser {
 public:
     ItchParser(utils::SPSCQueue<T, QUEUE_SIZE>& queue)
         : queue_ { queue }
+        , logger_ { "logs/event_log.txt "}
     { }
 
     void on_data([[maybe_unused]] int connection_fd, utils::MagicBuffer& raw_data_buffer) {
@@ -28,10 +30,11 @@ public:
 
             const char message_type = *raw_data;
             int bytes_available = raw_data_buffer.read_space_left();
+
             switch (message_type) {
-                case 'A': if (bytes_available < 36) return; break;
-                case 'E': if (bytes_available < 31) return; break;
-                case 'X': if (bytes_available < 23) return; break;
+                case 'A': if (bytes_available < 36) return; logger_.append(raw_data, 36); break;
+                case 'E': if (bytes_available < 31) return; logger_.append(raw_data, 31); break;
+                case 'X': if (bytes_available < 23) return; logger_.append(raw_data, 23); break;
                 default: throw std::runtime_error("ItchParser: Current message type is not supported.");
             }
 
@@ -61,6 +64,7 @@ public:
 
 private:
     utils::SPSCQueue<T, QUEUE_SIZE>& queue_;
+    alignas(64) utils::MmapLogger logger_;
 
     void parse_add_order(const void* raw_data, Header& header, utils::MagicBuffer& buffer) {
         const AddOrder* data = reinterpret_cast<const AddOrder*>(raw_data);
