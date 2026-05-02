@@ -3,6 +3,14 @@
 #include "utils/MmapLogger.h"
 #include <unistd.h>
 
+struct alignas(32) LogEvent {
+    uint64_t timestamp;
+    uint64_t order_id;
+    uint32_t price;
+    uint32_t quantity;
+    char event_type;
+};
+
 /*
 * This class has the same functionality as MmapLogger, but uses write() syscalls for logging.
 * This class is used to check the performance improvement of MmapLogger, showing the difference
@@ -23,8 +31,8 @@ public:
         }
     }
 
-    bool append(const utils::LogEvent& event) {
-        int ret = write(fd_, &event, sizeof(utils::LogEvent));
+    bool append(const LogEvent& event) {
+        int ret = write(fd_, &event, sizeof(LogEvent));
         if (ret == -1) {
             throw std::runtime_error("WriteLogger (append): Unable to append data to file. Error: " + std::string(strerror(errno)));
         }
@@ -46,7 +54,7 @@ int main() {
     const char* filepath = "./logs/write_logger_bench_results.txt";
     WriteLogger logger(filepath);
 
-    utils::LogEvent event{};
+    LogEvent event{};
      // warm up cache
     for (size_t i = 0; i < 100'000; ++i) {
         event.order_id = i;

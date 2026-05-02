@@ -1,12 +1,19 @@
 #include "bench_utils.h"
 #include "utils/MmapLogger.h"
 
-#include <iostream>
 #include <limits>
 #include <random>
 
+struct alignas(32) LogEvent {
+    uint64_t timestamp;
+    uint64_t order_id;
+    uint32_t price;
+    uint32_t quantity;
+    char event_type;
+};
+
 // rng may add overhead
-utils::LogEvent create_dummy_event() {
+LogEvent create_dummy_event() {
     constexpr static uint64_t UINT64T_MAX = std::numeric_limits<uint64_t>::max();
     constexpr static uint32_t UINT32T_MAX = std::numeric_limits<uint32_t>::max();
 
@@ -18,7 +25,7 @@ utils::LogEvent create_dummy_event() {
     static std::vector<char> events { 'A', 'E', 'X' }; // contains all currently supported events, should be updated accordingly
     static std::uniform_int_distribution<size_t> event_type_dist(0, events.size());
 
-    utils::LogEvent event;
+    LogEvent event;
     event.timestamp = timestamp_dist(rng);
     event.order_id = order_id_dist(rng);
     event.price = price_dist(rng);
@@ -34,7 +41,7 @@ int main() {
     const char* filepath = "./logs/mmap_logger_bench_results.txt";
     utils::MmapLogger logger(filepath);
 
-    utils::LogEvent event{};
+    LogEvent event{};
     // warm up cache
     for (size_t i = 0; i < 100'000; ++i) {
         event.order_id = i;

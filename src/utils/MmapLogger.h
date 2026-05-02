@@ -12,14 +12,6 @@
 
 namespace utils {
 
-struct LogEvent {
-    uint64_t timestamp;
-    uint64_t order_id;
-    uint32_t price;
-    uint32_t quantity;
-    char event_type;
-} __attribute__((packed));
-
 /*
 * MmapLogger class is used to log all events that occurred in the order book.
 * This allows for deterministic replay if orderbook crashes.
@@ -90,13 +82,13 @@ public:
     * Append assumes that there is sufficient space for all market data logging.
     * Current space allocated is 1GB. If space is not enough, this function returns false.
     */
-    bool append(const LogEvent& event) {
-        char* next_curr = curr_ + sizeof(LogEvent);
+    bool append(void* buffer, size_t length) {
+        char* next_curr = curr_ + length;
         if (next_curr > start_ + FILE_SIZE) [[unlikely]] {
             return false;
         }
 
-        std::memcpy(curr_, &event, sizeof(LogEvent));
+        std::memcpy(curr_, buffer, length);
         curr_ = next_curr;
         return true;
     }
