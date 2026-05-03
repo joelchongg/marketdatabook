@@ -1,5 +1,6 @@
 #include "book/LimitOrderBook.h"
 #include "network/EpollReactor.h"
+#include "network/MulticastReceiver.h"
 #include "network/TCPSocket.h"
 #include "protocol/ItchParser.h"
 #include "protocol/OrderTypes.h"
@@ -12,7 +13,8 @@
 #include <thread>
 #include <variant>
 
-#define SERVER_PORT_NUMBER "58362"
+#define HOST_INTERFACE "eth0"
+#define MULTICAST_IP_ADDR "224.0.0.0"
 
 using Orders = std::variant<protocol::NormalizedAddOrder, protocol::NormalizedOrderExecuted, protocol::NormalizedCancelOrder>;
 
@@ -79,35 +81,17 @@ int main() {
     // create logging file
     utils::MmapLogger logger("logs/event_logs.txt");
 
-    network::TCPSocket server(SERVER_PORT_NUMBER);
-    server.set_non_blocking();
-    server.listen();
-
-    // used objects
     utils::SPSCQueue<Orders, 4096> queue;
     book::LimitOrderBook book(1000);
 
-    utils::SPSCQueue<int, 1024> incoming_connections_queue;
-    int event_fd = eventfd(0, EFD_CLOEXEC);
-    if (event_fd == -1) [[unlikely]] {
-        throw std::runtime_error("Main: Unable to create event fd. Error: " + std::string(strerror(errno)));
-    }
-
-    protocol::ItchParser parser {queue};
-    network::EpollReactor epoller {parser, incoming_connections_queue, event_fd, true};
-    network::EpollReactor connections {parser, incoming_connections_queue, event_fd, false};
-
-    epoller.add_socket(server.get_fd());
-
-    // launch thread for checking new connections
-    std::thread incoming_connections_thread{&network::EpollReactor<decltype(parser)>::wait_for_connections, &connections, std::ref(server)};
+    protocol::ItchParser parser {queue, logger};
+    network::MulticastReceiver poller {parser, HOST_INTERFACE, MULTICAST_IP_ADDR};
 
     // launch consumer thread
     std::thread lob_thread{consume<Orders, 4096>, std::ref(queue), std::ref(book)};
 
-    // main thread runs epoll
-    epoller.run();
-        
+    // main thread runs multicast polling
+    poller.poll();
 
     return 0;
 }
