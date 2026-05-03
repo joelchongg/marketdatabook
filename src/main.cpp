@@ -6,6 +6,7 @@
 #include "utils/spscqueue.h"
 #include "utils/MmapLogger.h"
 
+#include <immintrin.h>
 #include <sys/eventfd.h>
 #include <pthread.h>
 #include <thread>
@@ -45,7 +46,7 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
     
     while (true) {
         T order;
-        while (!queue.pop(order));
+        while (!queue.pop(order)) { _mm_pause(); };
         // debugging
         // std::cout << "Consuming order...\n";
 
