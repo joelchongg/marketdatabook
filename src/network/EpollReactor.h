@@ -3,7 +3,9 @@
 #include <array>
 #include <concepts>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <stdexcept>
 #include <unistd.h>
 #include <utility>
@@ -23,12 +25,13 @@ concept HasOnDataMethod = requires(T obj, int fd, utils::MagicBuffer& buf) {
 template <HasOnDataMethod MessageHandler>
 class EpollReactor {
 public:
-    EpollReactor(MessageHandler& handler, utils::SPSCQueue<int, 1024>& new_connections_queue, int event_fd, bool initialize_buffers) 
+    EpollReactor(MessageHandler& handler, utils::SPSCQueue<int, 1024>& new_connections_queue,
+                 int event_fd, bool initialize_buffers) 
         : handler_ { handler }
         , incoming_connections_ { new_connections_queue }
         , epoll_fd_ { epoll_create1(EPOLL_CLOEXEC) }
         , event_fd_ { event_fd } {
-        if (epoll_fd_ == -1) {
+        if (epoll_fd_ == -1) [[unlikely]] {
             throw std::runtime_error("EpollReactor: Unable to create epoll instance. Error: " + std::string(strerror(errno)));
         }
 
@@ -91,13 +94,26 @@ public:
     * that may be in the midst of processing incoming market data
     */
     void wait_for_connections(TCPSocket& server_socket) {
+        // pin thread to Core 0 (beside main epoll thread on core 1)
+        cpu_set_t cpu_set;
+        CPU_ZERO(&cpu_set);
+        CPU_SET(0, &cpu_set);
+        pthread_t current_thread = pthread_self();
+        int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t),  &cpu_set);
+        if (ret != 0) [[unlikely]] {
+            throw std::runtime_error("EpollReactor: Unable to pin connections thread to Core 0. Error Code: " + std::to_string(ret));
+        }
+
         while (true) {
             int new_connection_fd = server_socket.accept();
             if (new_connection_fd == -1) continue;
 
             while (!incoming_connections_.push(new_connection_fd));
             uint64_t dummy = 1; // used to signal a connection has been added
-            write(event_fd_, &dummy, sizeof(uint64_t));
+            int bytes_written = write(event_fd_, &dummy, sizeof(uint64_t));
+            if (bytes_written == -1) [[unlikely]] {
+                throw std::runtime_error("EpollReactor: Unable to write to event_fd for new connection. Error: " + std::string(strerror(errno)));
+            }
         }
     }
 
@@ -180,7 +196,7 @@ public:
 private:
     constexpr static const int MAX_EVENTS { 64 };
     constexpr static const int MAX_BUFFER_SIZE { 4096 }; // should be tuned accordingly (align with page size)
-    constexpr static const int MAX_CONNECTIONS { 1000 }; // should be tuned when we have more information
+    constexpr static const int MAX_CONNECTIONS { 1000 }; // should be tuned when we have more information    
 
     MessageHandler& handler_;
     std::vector<utils::MagicBuffer> fd_buffers_;
