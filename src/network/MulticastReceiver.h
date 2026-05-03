@@ -4,10 +4,12 @@
 #include <atomic>
 #include <cstring>
 #include <emmintrin.h>
+#include <iostream>
 #include <linux/filter.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
 #include <net/if.h>
+#include <pthread.h>
 #include <stdexcept>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -169,6 +171,34 @@ public:
             // return frame to kernel
             status.store(TP_STATUS_KERNEL, std::memory_order_release);
             curr_frame_idx_ = (curr_frame_idx_ + 1) % RX_FRAME_NR;
+        }
+    }
+
+    /*
+    * This function is used to obtain statistics regarding received and dropped packets
+    * This function is used to ensure that packets are not dropped and we can process packets at an optimal speed.
+    */
+    void print_statistics() const {
+        // pin current thread so that it does not migrate to the main cores
+        cpu_set_t cpu_set;
+        CPU_ZERO(&cpu_set);
+        CPU_SET(7, &cpu_set);
+
+        pthread_t current_thread = pthread_self();
+        if (int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpu_set); ret != 0) {
+            std::cout << "Unable to pin statistics thread to a separate core. Error Code: " << ret << '\n';
+        }
+
+        while (true) {
+            struct tpacket_stats stats;
+            socklen_t len = sizeof(stats);
+            if (getsockopt(fd_, SOL_PACKET, PACKET_STATISTICS, &stats, &len) == -1) {
+                std::cout << "Unable to get packet statistics. Error: " << strerror(errno) << '\n';
+                return;
+            }
+    
+            printf("[Telemetry] Packets Per Second: %d | Drops Per Second: %d\n", stats.tp_packets, stats.tp_drops);
+            sleep(1);
         }
     }
 

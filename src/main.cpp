@@ -90,6 +90,9 @@ int main() {
     // launch consumer thread
     std::thread lob_thread{consume<Orders, 4096>, std::ref(queue), std::ref(book)};
 
+    // debug: launch separate thread for printing statistics
+    std::thread packet_stats_thread{&network::MulticastReceiver<decltype(parser)>::print_statistics, std::ref(poller)};
+
     // main thread runs multicast polling
     poller.poll();
 
