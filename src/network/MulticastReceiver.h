@@ -1,9 +1,12 @@
 #pragma once
 
+#include "utils/PCAPSimulation.h"
+
 #include <arpa/inet.h>
 #include <atomic>
 #include <cstring>
 #include <emmintrin.h>
+#include <fcntl.h>
 #include <iostream>
 #include <linux/filter.h>
 #include <linux/if_ether.h>
@@ -14,6 +17,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <utility>
 
@@ -43,7 +47,6 @@ public:
         }
 
         // add multicast packet membership
-        
         // retreive interface index
         struct ifreq ifreq;
         std::memcpy(ifreq.ifr_ifrn.ifrn_name, interface_name.data(), interface_name.size() + 1); // account for null terminator
@@ -79,6 +82,16 @@ public:
             throw std::runtime_error("MulticastReceiver: Unable to add multicast packet membership. Error: " + std::string(strerror(errno)));
         }
 
+        // setup cBPF filter to filter ARP or unwanted multicast packets
+        struct sock_fprog bpf;
+        bpf.len = sizeof(bpf_code) / sizeof(bpf_code[0]);
+        bpf.filter = bpf_code;
+        ret = setsockopt(fd_, SOL_PACKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
+        if (ret == -1) [[unlikely]] {
+            close(fd_);
+            throw std::runtime_error("MulticastReceiver: Unable to attach BPF filter. Error: " + std::string(strerror(errno)));
+        }
+
         // use TPACKET_V2 instead of TPACKET_V3 to optimize for latency over throughput
         int tpacket_ver = TPACKET_V2;
         ret = setsockopt(fd_, SOL_PACKET, PACKET_VERSION, &tpacket_ver, sizeof(tpacket_ver));
@@ -107,16 +120,19 @@ public:
             throw std::runtime_error("MulticastReceiver: Unable to mmap RX ring buffer. Error: " + std::string(strerror(errno)));
         }
         ring_ = static_cast<char *>(ring_addr);
+    }
 
-        // setup cBPF filter to filter ARP or unwanted multicast packets
-        struct sock_fprog bpf;
-        bpf.len = sizeof(bpf_code) / sizeof(bpf_code[0]);
-        bpf.filter = bpf_code;
-        ret = setsockopt(fd_, SOL_PACKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
-        if (ret == -1) [[unlikely]] {
-            close(fd_);
-            munmap(ring_, total_size_);
-            throw std::runtime_error("MulticastReceiver: Unable to attach BPF filter. Error: " + std::string(strerror(errno)));
+    /*
+    * Used for simulating multicast due to lack of permissions
+    */
+    MulticastReceiver(bool mock_mode) {
+        if (mock_mode) {
+            total_size_ = RX_BLOCK_SIZE * RX_BLOCK_NR;
+            void* ring_addr = mmap(NULL, total_size_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
+            if (ring_addr == MAP_FAILED) [[unlikely]] {
+                throw std::runtime_error("MulticastReceiver: Unable to create mock RX ring buffer. Error: " + std::string(strerror(errno)));
+            }
+            ring_ = static_cast<char *>(ring_addr);
         }
     }
 
@@ -171,6 +187,7 @@ public:
             // return frame to kernel
             status.store(TP_STATUS_KERNEL, std::memory_order_release);
             curr_frame_idx_ = (curr_frame_idx_ + 1) % RX_FRAME_NR;
+            total_packets.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -202,6 +219,83 @@ public:
         }
     }
 
+    void print_statistics_mock_mode() {
+        // pin current thread so that it does not migrate to the main cores
+        cpu_set_t cpu_set;
+        CPU_ZERO(&cpu_set);
+        CPU_SET(7, &cpu_set);
+
+        pthread_t current_thread = pthread_self();
+        if (int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpu_set); ret != 0) {
+            std::cout << "Unable to pin statistics thread to a separate core. Error Code: " << ret << '\n';
+        }
+
+        uint64_t packets_per_second;
+        while (true) {
+            packets_per_second = total_packets.exchange(0, std::memory_order_relaxed);
+            printf("[Telemetry (Mock Mode)] Packets Per Second: %d\n", packets_per_second);
+            sleep(1);
+        }
+    }
+
+    /*
+    * Used to simulate packets by using a PCAP file for replay without tcpreplay
+    * A thread runs this to add packets to the ring buffer to simulate the kernel
+    */
+    void simulate_packets(const std::string& filename) {
+        int fd = open(filename.c_str(), O_RDONLY);
+        if (fd == -1) [[unlikely]] {
+            throw std::runtime_error("MulticastReceiver: Unable to open file " + filename + " to simulate packet arrival. Error: " + std::string(strerror(errno)));
+        }
+
+        struct stat buf;
+        fstat(fd, &buf);
+        void* data_addr = mmap(NULL, buf.st_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+        if (data_addr == MAP_FAILED) [[unlikely]] {
+            throw std::runtime_error("MulticastReceiver: Unable to mmap for file " + filename + ". Error: " + std::string(strerror(errno)));
+        }
+
+        char* data = static_cast<char *>(data_addr);
+        char* data_end = data + buf.st_size;
+        if (madvise(data, buf.st_size, MADV_SEQUENTIAL) == -1) [[unlikely]] {
+            throw std::runtime_error("MulticastReceiver: Unable to set MADV_SEQUENTIAL for simulating packets. Error: " + std::string(strerror(errno)));
+        }
+
+        // global header information
+        utils::pcap_global_hdr* global_hdr_ptr = reinterpret_cast<utils::pcap_global_hdr *>(data);
+
+        // skip global header
+        data += sizeof(utils::pcap_global_hdr);
+        utils::pcap_packet_hdr* packet_hdr_ptr = reinterpret_cast<utils::pcap_packet_hdr *>(data);
+        int frame_idx = 0;
+        while (data < data_end) {
+            char* curr_frame_ptr = ring_ + (frame_idx * RX_FRAME_SIZE);
+            struct tpacket2_hdr* frame_hdr_ptr = reinterpret_cast<struct tpacket2_hdr *>(curr_frame_ptr);
+            std::atomic_ref<unsigned int> status(frame_hdr_ptr->tp_status);
+            while (status.load(std::memory_order_acquire) & TP_STATUS_USER) { _mm_pause(); }
+
+            // set frame header information
+            frame_hdr_ptr->tp_sec = packet_hdr_ptr->ts_sec;
+            frame_hdr_ptr->tp_nsec = packet_hdr_ptr->ts_usec * 1000;
+            frame_hdr_ptr->tp_snaplen = packet_hdr_ptr->incl_len;
+            frame_hdr_ptr->tp_len = packet_hdr_ptr->orig_len;
+            frame_hdr_ptr->tp_mac = TPACKET_ALIGN(sizeof(struct tpacket2_hdr));
+            frame_hdr_ptr->tp_net = frame_hdr_ptr->tp_mac + ETH_HLEN;
+
+            // set payload
+            if (data + sizeof(utils::pcap_packet_hdr) + packet_hdr_ptr->incl_len > data_end) break;
+            std::memcpy(curr_frame_ptr + frame_hdr_ptr->tp_mac, data + sizeof(utils::pcap_packet_hdr), packet_hdr_ptr->incl_len); 
+
+            status.store(TP_STATUS_USER, std::memory_order_release);
+            data += sizeof(utils::pcap_packet_hdr) + packet_hdr_ptr->incl_len;
+            packet_hdr_ptr = reinterpret_cast<utils::pcap_packet_hdr *>(data);
+            frame_idx = (frame_idx + 1) % RX_FRAME_NR;
+        }
+
+        close(fd);
+        munmap(data_addr, buf.st_size);
+    }
+
 private:
     constexpr static unsigned int RX_BLOCK_SIZE { 1 << 16 };    // 64 KB, can be increased when using HugePages
     constexpr static unsigned int RX_FRAME_SIZE { 2048 };       // nearest powero f 2 for MTU + TPACKET_HDRLEN
@@ -213,6 +307,7 @@ private:
     size_t curr_frame_idx_ { 0 };
     int fd_ { -1 };
     int total_size_ { 0 };
+    alignas(64) std::atomic<uint64_t> total_packets{0}; // used during mock mode to check throughput
 
     // bpf filter code generated via tcpdump (tcpdump -dd "udp and dst port 58362")
     static inline struct sock_filter bpf_code[] = {
