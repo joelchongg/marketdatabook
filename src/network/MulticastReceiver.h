@@ -185,7 +185,7 @@ public:
             // get start of data by pointer arithmetic past header bytes and parse data
             // IP Header 20 Bytes, UDP header 8 bytes
             char* payload_ptr = start_of_frame + packet->tp_net + 20 + 8;
-            int payload_length = packet->tp_snaplen - packet->tp_net - 20 - 8;
+            int payload_length = packet->tp_snaplen - ETH_HLEN - 20 - 8;
             handler_.parse_block(payload_ptr, payload_length);
 
             // return frame to kernel
