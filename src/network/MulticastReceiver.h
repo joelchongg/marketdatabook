@@ -13,6 +13,7 @@
 #include <linux/if_packet.h>
 #include <net/if.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdexcept>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -125,14 +126,17 @@ public:
     /*
     * Used for simulating multicast due to lack of permissions
     */
-    MulticastReceiver(bool mock_mode) {
-        if (mock_mode) {
+    MulticastReceiver(MessageHandler& handler, bool mock_mode)
+        : handler_ { handler } {
+        if (mock_mode) [[likely]] {
             total_size_ = RX_BLOCK_SIZE * RX_BLOCK_NR;
             void* ring_addr = mmap(NULL, total_size_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
             if (ring_addr == MAP_FAILED) [[unlikely]] {
                 throw std::runtime_error("MulticastReceiver: Unable to create mock RX ring buffer. Error: " + std::string(strerror(errno)));
             }
             ring_ = static_cast<char *>(ring_addr);
+        } else {
+            throw std::runtime_error("MulticastReceiver: Mock mode constructor should only be used when mock_mode is true.");
         }
     }
 
@@ -233,7 +237,7 @@ public:
         uint64_t packets_per_second;
         while (true) {
             packets_per_second = total_packets.exchange(0, std::memory_order_relaxed);
-            printf("[Telemetry (Mock Mode)] Packets Per Second: %d\n", packets_per_second);
+            printf("[Telemetry (Mock Mode)] Packets Per Second: %ld\n", packets_per_second);
             sleep(1);
         }
     }
@@ -243,6 +247,16 @@ public:
     * A thread runs this to add packets to the ring buffer to simulate the kernel
     */
     void simulate_packets(const std::string& filename) {
+        // pin current thread to core 0 which is beside the main poller thread on core 1
+        cpu_set_t cpu_set;
+        CPU_ZERO(&cpu_set);
+        CPU_SET(0, &cpu_set);
+
+        pthread_t current_thread = pthread_self();
+        if (int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpu_set); ret != 0) {
+            std::cout << "Unable to pin simulate_packets thread to core 0. Error Code: " << ret << '\n';
+        }
+
         int fd = open(filename.c_str(), O_RDONLY);
         if (fd == -1) [[unlikely]] {
             throw std::runtime_error("MulticastReceiver: Unable to open file " + filename + " to simulate packet arrival. Error: " + std::string(strerror(errno)));
@@ -260,9 +274,6 @@ public:
         if (madvise(data, buf.st_size, MADV_SEQUENTIAL) == -1) [[unlikely]] {
             throw std::runtime_error("MulticastReceiver: Unable to set MADV_SEQUENTIAL for simulating packets. Error: " + std::string(strerror(errno)));
         }
-
-        // global header information
-        utils::pcap_global_hdr* global_hdr_ptr = reinterpret_cast<utils::pcap_global_hdr *>(data);
 
         // skip global header
         data += sizeof(utils::pcap_global_hdr);

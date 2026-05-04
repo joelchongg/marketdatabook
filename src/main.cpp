@@ -15,6 +15,7 @@
 
 #define HOST_INTERFACE "eth0"
 #define MULTICAST_IP_ADDR "224.0.0.0"
+#define MOCK_MODE true
 
 using Orders = std::variant<protocol::NormalizedAddOrder, protocol::NormalizedOrderExecuted, protocol::NormalizedCancelOrder>;
 
@@ -64,6 +65,28 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
     }
 }
 
+void run_mock_mode() {
+    utils::MmapLogger logger("logs/event_logs.txt");
+    utils::SPSCQueue<Orders, 4096> queue;
+    book::LimitOrderBook book(1000);
+
+    protocol::ItchParser parser {queue, logger};
+    network::MulticastReceiver poller(parser, true);
+
+    // launch consumer thread (pinned to core 2)
+    std::thread lob_thread{consume<Orders, 4096>, std::ref(queue), std::ref(book)};
+
+    // launch statistics thread (pinned to core 7)
+    std::thread statistics_thread{&network::MulticastReceiver<decltype(parser)>::print_statistics_mock_mode, std::ref(poller)};
+
+    // launch thread to simulate kernel packets (pinned to core 0)
+    const std::string PCAP_FILENAME = "pcap_file.pcap";
+    std::thread kernel_packet_thread{&network::MulticastReceiver<decltype(parser)>::simulate_packets, std::ref(poller), PCAP_FILENAME};
+
+    // main thread runs polling
+    poller.poll();
+}
+
 int main() {
     // pin current thread which will be the epoll thread to one core (pin to core 1)
     cpu_set_t cpu_set;
@@ -76,6 +99,11 @@ int main() {
 
     if (ret != 0) [[unlikely]] {
         throw std::runtime_error("Unable to pin main thread to Core 1. Error Code: " + std::to_string(ret));
+    }
+
+    if (MOCK_MODE) {
+        run_mock_mode();
+        return 0;
     }
 
     // create logging file
