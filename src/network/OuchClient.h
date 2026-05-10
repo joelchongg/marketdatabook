@@ -8,6 +8,24 @@
 namespace network {
 
 /*
+* Union is used due to OUCH having different order types
+* Avoids overhead of std::variant, which may cause us to send the type id as well as data payload.
+*/
+union OuchPayload {
+    protocol::FramedEnterOrder enter_order;
+};
+
+/*
+* Used to store metadata along with the OuchPayload union object
+* Metadata allows us to know how much data to send, without querying for the actual type of the data in the union
+* Aligned to 64 bytes to avoid false sharing as the OUCH order pool will be shared amongst all OuchClient objects
+*/
+struct alignas(64) OuchPacket {
+    size_t packet_len;
+    OuchPayload payload;
+};
+
+/*
 * The OuchClient class manages the outbound TCP connection to the exchange.
 * This is used to send orders to the exchange.
 */
@@ -41,13 +59,14 @@ public:
     * Used to send orders to the NASDAQ OUCH Server.
     * Returns false if orders are not sent completely.
     */
-    bool send_order(const protocol::FramedEnterOrder* order) {
+    bool send_order(OuchPacket* order) {
         // do not send a new order if there is a pending write in order to prevent corruption
         if (state_ == OuchState::PendingWrite) {
             return false;
         }
 
-        ssize_t bytes_written = send(socket_fd_, order, sizeof(protocol::FramedEnterOrder), 0);
+        size_t packet_len = order->packet_len;
+        ssize_t bytes_written = send(socket_fd_, &order->payload, packet_len, 0);
         if (bytes_written == -1) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 bytes_written = 0;
@@ -57,10 +76,10 @@ public:
         }
 
         // half write occurred, EpollReactor will call handle_write in order to send the rest of the packet
-        if (bytes_written < sizeof(protocol::FramedEnterOrder)) {
+        if (bytes_written < packet_len) {
             state_ = OuchState::PendingWrite;
-            pending_buffer_ = reinterpret_cast<const uint8_t*>(order) + bytes_written;
-            pending_bytes_ = sizeof(protocol::FramedEnterOrder) - bytes_written;
+            pending_buffer_ = reinterpret_cast<const uint8_t*>(&order->payload) + bytes_written;
+            pending_bytes_ =  packet_len - bytes_written;
             return false;
         }
 
@@ -107,8 +126,6 @@ public:
     }
 
 private:
-    constexpr static size_t BUFFER_SIZE { 1 << 14 }; // 16KB
-
     TCPSocket socket_;
     int socket_fd_ { -1 };
     OuchState state_{OuchState::Disconnected};
