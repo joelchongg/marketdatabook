@@ -71,7 +71,7 @@ public:
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 bytes_written = 0;
             } else [[unlikely]] {
-                throw std::runtime_error("OuchClient::send_order: Unable to send order to server. Error: " + std::string(strerror(errno)));
+                throw std::runtime_error("OuchClient::send_order(): Unable to send order to server. Error: " + std::string(strerror(errno)));
             }
         }
 
@@ -95,10 +95,10 @@ public:
             int error = 0;
             socklen_t len = sizeof(error);
             if (getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &error, &len) == -1) [[unlikely]] {
-                throw std::runtime_error("OuchClient::handle_write: Unable to retrieve socket options. Error: " + std::string(strerror(errno)));
+                throw std::runtime_error("OuchClient::handle_write(): Unable to retrieve socket options. Error: " + std::string(strerror(errno)));
             }
             if (error != 0) {
-                throw std::runtime_error("OuchClient::handle_write: Error occured during connection establishment. Error: " + std::string(strerror(error)));
+                throw std::runtime_error("OuchClient::handle_write(): Error occured during connection establishment. Error: " + std::string(strerror(error)));
             }
 
             state_ = OuchState::Connected;
@@ -109,7 +109,7 @@ public:
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     bytes_written = 0;
                 } else [[unlikely]] {
-                    throw std::runtime_error("OuchClient::handle_write: Unable to send order to server. Error: " + std::string(strerror(errno)));
+                    throw std::runtime_error("OuchClient::handle_write(): Unable to send order to server. Error: " + std::string(strerror(errno)));
                 }
             }
 

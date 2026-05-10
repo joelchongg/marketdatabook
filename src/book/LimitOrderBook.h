@@ -39,7 +39,7 @@ class LimitOrderBook {
 public:
     LimitOrderBook(size_t max_orders) {
         if (max_orders == 0) {
-            throw std::runtime_error("Max Orders should be a positive value.");
+            throw std::runtime_error("LimitOrderBook(): Max Orders should be a positive value.");
         }
 
         size_t bytes_needed = max_orders * sizeof(Order);
@@ -47,7 +47,7 @@ public:
         void* pool_addr = mmap(NULL, page_aligned_bytes_needed, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
 
         if (pool_addr == MAP_FAILED) [[unlikely]] {
-            throw std::runtime_error("LimitOrderBook: Unable to mmap order pool. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("LimitOrderBook(): Unable to mmap order pool. Error: " + std::string(strerror(errno)));
         }
 
         pool_ = static_cast<Order *>(pool_addr);
@@ -113,7 +113,7 @@ public:
         Order& curr_order = pool_[order_idx];
 
         if (curr_order.shares < order.shares) {
-            throw std::runtime_error("Current order has less shares than required from execute order");
+            throw std::runtime_error("LimitOrderBook::execute_order(): Current order has less shares than required from execute order");
         }
 
         curr_order.shares -= order.shares;

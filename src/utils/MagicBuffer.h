@@ -23,39 +23,45 @@ class MagicBuffer {
 public:
     MagicBuffer(size_t capacity) {
         if (capacity == 0) [[unlikely]] {
-            throw std::logic_error("Magic Buffer: Unable to create magic buffer of size 0");
+            throw std::logic_error("MagicBuffer(): Unable to create magic buffer of size 0");
         }
 
         fd_ = memfd_create("magicbuf", MFD_CLOEXEC);
         if (fd_ == -1) [[unlikely]] {
-            throw std::runtime_error("Magic Buffer: Unable to create file descriptor for magic buffer. Error Code: " + std::string(strerror(errno)));
+            throw std::runtime_error("MagicBuffer(): Unable to create file descriptor for magic buffer. Error Code: " 
+                + std::string(strerror(errno)));
         }
 
         // capacity must be aligned to page size
         aligned_capacity_ = (capacity + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
         if (ftruncate(fd_, aligned_capacity_) == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("Magic Buffer (ftrunctate): Unable to create magic buffer. Error Code: " + std::string(strerror(errno)));
+            throw std::runtime_error("MagicBuffer(): Unable to create magic buffer. Error Code: " 
+                + std::string(strerror(errno)));
         }
 
         char* buffer = static_cast<char *>(mmap(NULL, aligned_capacity_ * 2, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
         if (buffer == MAP_FAILED) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("Magic Buffer: Unable to mmap, not enough memory. Error Code: " + std::string(strerror(errno)));
+            throw std::runtime_error("MagicBuffer(): Unable to mmap, not enough memory. Error Code: " 
+                + std::string(strerror(errno)));
         }
 
         start_ = static_cast<char *>(mmap(buffer, aligned_capacity_, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd_, 0));
         if (start_ == MAP_FAILED) [[unlikely]] {
             munmap(buffer, aligned_capacity_ * 2);
             close(fd_);
-            throw std::runtime_error("Magic Buffer: Unexpected error occurred when mapping start_. Error Code: " + std::string(strerror(errno)));
+            throw std::runtime_error("MagicBuffer(): Unexpected error occurred when mapping start of buffer. Error Code: " 
+                + std::string(strerror(errno)));
         }
 
         second_half_start_ = static_cast<char *>(mmap(buffer + aligned_capacity_, aligned_capacity_, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd_, 0));
         if (second_half_start_ == MAP_FAILED) [[unlikely]] {
             munmap(start_, aligned_capacity_ * 2);
             close(fd_);
-            throw std::runtime_error("Magic Buffer: Unexpected error occurred when mapping end_. Error Code: " + std::string(strerror(errno)));
+            throw std::runtime_error(
+                "MagicBuffer(): Unexpected error occurred when mapping second start of buffer. Error Code: " 
+                + std::string(strerror(errno)));
         }
 
         write_head_ = start_;

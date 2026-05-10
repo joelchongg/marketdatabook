@@ -44,7 +44,7 @@ public:
         : handler_ { handler } {
         fd_ = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
         if (fd_ == -1) [[unlikely]] {
-            throw std::runtime_error("MulticastReceiver: Unable to create AF_PACKET socket. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to create AF_PACKET socket. Error: " + std::string(strerror(errno)));
         }
 
         // add multicast packet membership
@@ -53,7 +53,7 @@ public:
         std::memcpy(ifreq.ifr_ifrn.ifrn_name, interface_name.data(), interface_name.size() + 1); // account for null terminator
         if (ioctl(fd_, SIOCGIFINDEX, &ifreq) == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to retrieve interface index for interface." + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to retrieve interface index for interface." + std::string(strerror(errno)));
         }
         int interface_idx = ifreq.ifr_ifindex;
 
@@ -64,10 +64,10 @@ public:
         uint32_t ip_addr;
         if (int ret = inet_pton(AF_INET, multicast_addr.data(), &ip_addr); ret == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to retrieve integer network representation for multicast address. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to retrieve integer network representation for multicast address. Error: " + std::string(strerror(errno)));
         } else if (ret == 0) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Invalid network format.");
+            throw std::runtime_error("MulticastReceiver(): Invalid network format.");
         }
 
         uint8_t* raw_address_bytes = reinterpret_cast<uint8_t*>(&ip_addr);
@@ -80,7 +80,7 @@ public:
         int ret = setsockopt(fd_, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
         if (ret == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to add multicast packet membership. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to add multicast packet membership. Error: " + std::string(strerror(errno)));
         }
 
         // setup cBPF filter to filter ARP or unwanted multicast packets
@@ -90,7 +90,7 @@ public:
         ret = setsockopt(fd_, SOL_PACKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
         if (ret == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to attach BPF filter. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to attach BPF filter. Error: " + std::string(strerror(errno)));
         }
 
         // use TPACKET_V2 instead of TPACKET_V3 to optimize for latency over throughput
@@ -98,7 +98,7 @@ public:
         ret = setsockopt(fd_, SOL_PACKET, PACKET_VERSION, &tpacket_ver, sizeof(tpacket_ver));
         if (ret == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to set TPACKET_VERSION. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to set TPACKET_VERSION. Error: " + std::string(strerror(errno)));
         }
 
         // setup RX ring
@@ -110,7 +110,7 @@ public:
         ret = setsockopt(fd_, SOL_PACKET, PACKET_RX_RING, &rx_req, sizeof(rx_req));
         if (ret == -1) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to setup RX ring. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to setup RX ring. Error: " + std::string(strerror(errno)));
         }
 
         // create shared mmap between user space and kernel space for zero copy packets
@@ -118,7 +118,7 @@ public:
         void* ring_addr = mmap(NULL, total_size_, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, fd_, 0);
         if (ring_addr == MAP_FAILED) [[unlikely]] {
             close(fd_);
-            throw std::runtime_error("MulticastReceiver: Unable to mmap RX ring buffer. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver(): Unable to mmap RX ring buffer. Error: " + std::string(strerror(errno)));
         }
         ring_ = static_cast<char *>(ring_addr);
     }
@@ -132,11 +132,11 @@ public:
             total_size_ = RX_BLOCK_SIZE * RX_BLOCK_NR;
             void* ring_addr = mmap(NULL, total_size_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
             if (ring_addr == MAP_FAILED) [[unlikely]] {
-                throw std::runtime_error("MulticastReceiver: Unable to create mock RX ring buffer. Error: " + std::string(strerror(errno)));
+                throw std::runtime_error("MulticastReceiver(): Unable to create mock RX ring buffer. Error: " + std::string(strerror(errno)));
             }
             ring_ = static_cast<char *>(ring_addr);
         } else {
-            throw std::runtime_error("MulticastReceiver: Mock mode constructor should only be used when mock_mode is true.");
+            throw std::runtime_error("MulticastReceiver(): Mock mode constructor should only be used when mock_mode is true.");
         }
     }
 
@@ -259,20 +259,20 @@ public:
 
         int fd = open(filename.c_str(), O_RDONLY);
         if (fd == -1) [[unlikely]] {
-            throw std::runtime_error("MulticastReceiver: Unable to open file " + filename + " to simulate packet arrival. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver::simulate_packets(): Unable to open file " + filename + " to simulate packet arrival. Error: " + std::string(strerror(errno)));
         }
 
         struct stat buf;
         fstat(fd, &buf);
         void* data_addr = mmap(NULL, buf.st_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
         if (data_addr == MAP_FAILED) [[unlikely]] {
-            throw std::runtime_error("MulticastReceiver: Unable to mmap for file " + filename + ". Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver::simulate_packets(): Unable to mmap for file " + filename + ". Error: " + std::string(strerror(errno)));
         }
 
         char* data = static_cast<char *>(data_addr);
         char* data_end = data + buf.st_size;
         if (madvise(data, buf.st_size, MADV_SEQUENTIAL) == -1) [[unlikely]] {
-            throw std::runtime_error("MulticastReceiver: Unable to set MADV_SEQUENTIAL for simulating packets. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("MulticastReceiver::simulate_packets(): Unable to set MADV_SEQUENTIAL for simulating packets. Error: " + std::string(strerror(errno)));
         }
 
         // skip global header

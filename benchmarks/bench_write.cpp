@@ -21,7 +21,7 @@ public:
     WriteLogger(const char* filename) {
         fd_ = open(filename, O_CREAT | O_RDWR | O_LARGEFILE | O_TRUNC, 0600);
         if (fd_ == -1) [[unlikely]] {
-            throw std::runtime_error("WriteLogger: unable to create new file. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("WriteLogger(): unable to create new file. Error: " + std::string(strerror(errno)));
         }
     }
 
@@ -34,7 +34,7 @@ public:
     bool append(const LogEvent& event) {
         int ret = write(fd_, &event, sizeof(LogEvent));
         if (ret == -1) {
-            throw std::runtime_error("WriteLogger (append): Unable to append data to file. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("WriteLogger::append(): Unable to append data to file. Error: " + std::string(strerror(errno)));
         }
         return true;
     }

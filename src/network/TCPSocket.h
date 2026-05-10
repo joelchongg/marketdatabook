@@ -27,26 +27,26 @@ public:
         hints.ai_flags = AI_PASSIVE;
 
         if (getaddrinfo(NULL, port_number.c_str(), &hints, &socket_info) != 0) {
-            throw std::runtime_error("Unable to obtain address info");
+            throw std::runtime_error("TCPSocket(): Unable to obtain address info for own server's port number: " + port_number);
         }
 
         socket_fd = socket(socket_info->ai_family, socket_info->ai_socktype, socket_info->ai_protocol);
         if (socket_fd == -1) {
             freeaddrinfo(socket_info);
-            throw std::runtime_error("Unable to obtain socket");
+            throw std::runtime_error("TCPSocket(): Unable to create a socket file descriptor for own server's port number: " + port_number);
         }
 
         int option = 1;
         if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) == -1) {
             close(socket_fd);
             freeaddrinfo(socket_info);
-            throw std::runtime_error("Unable to set SO_REUSEADDR");
+            throw std::runtime_error("TCPSocket(): Unable to set SO_REUSEADDR for own server's port number: " + port_number);
         }
         
         if (int rc = bind(socket_fd, socket_info->ai_addr, socket_info->ai_addrlen); rc == -1) {
             close(socket_fd);
             freeaddrinfo(socket_info);
-            throw std::runtime_error("Unable to bind socket to port number: " + port_number);
+            throw std::runtime_error("TCPSocket(): Unable to bind socket to port number: " + port_number);
         }
 
         freeaddrinfo(socket_info);
@@ -83,7 +83,7 @@ public:
     void listen(int backlog = 128) {
         int rc = ::listen(socket_fd, backlog);
         if (rc == -1) {
-            throw std::runtime_error("Unable to listen on this socket.");
+            throw std::runtime_error("TCPSocket::listen(): Unable to listen on socket.");
         }
     }
 
@@ -96,7 +96,7 @@ public:
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 return -1;
             }
-            throw std::runtime_error("Unable to accept a connection on this socket.");
+            throw std::runtime_error("TCPSocket::accept(): Unable to accept a connection on socket.");
         }
         return rc;
     }
@@ -114,7 +114,7 @@ public:
 
         if (getaddrinfo(server.c_str(), port_number.c_str(), &hints, &res) != 0) [[unlikely]] {
             throw std::runtime_error(
-                "TCPSocket::connect: Unable to get address information for server: " 
+                "TCPSocket::connect(): Unable to get address information for server: " 
                 + server + " and port number: " + port_number + ".");
         }
 
@@ -124,12 +124,12 @@ public:
     void set_non_blocking() {
         int flags = fcntl(socket_fd, F_GETFL, 0);
         if (flags == -1) [[unlikely]] {
-            throw std::runtime_error("Unable to get socket's flags");
+            throw std::runtime_error("TCPSocket::set_non_blocking(): Unable to get socket's flags");
         }
 
         int rc = fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK);
         if (rc == -1) [[unlikely]] {
-            throw std::runtime_error("Unable to set socket to be non blocking.");
+            throw std::runtime_error("TCPSocket::set_non_blocking(): Unable to set socket to be non blocking.");
         }
     }
 
@@ -139,7 +139,9 @@ public:
     void set_no_delay(int enable) {
         int rc = setsockopt(socket_fd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(enable));
         if (rc < 0) [[unlikely]] {
-            throw std::runtime_error("TCPSocket::set_no_delay: Unable to set/unset socket's Nagle's Algorithm. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error(
+                "TCPSocket::set_no_delay(): Unable to set/unset socket's Nagle's Algorithm. Error: " 
+                + std::string(strerror(errno)));
         }
     }
 
@@ -149,7 +151,9 @@ public:
     void set_quick_ack(int enable) {
         int rc = setsockopt(socket_fd, IPPROTO_TCP, TCP_QUICKACK, &enable, sizeof(enable));
         if (rc < 0) [[unlikely]] {
-            throw std::runtime_error("TCPSocket::set_quick_ack: Unable to set/unset socket's QUICKACK. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error(
+                "TCPSocket::set_quick_ack(): Unable to set/unset socket's QUICKACK. Error: " 
+                + std::string(strerror(errno)));
         }
     }
 

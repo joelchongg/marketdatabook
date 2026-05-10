@@ -32,7 +32,7 @@ public:
         , epoll_fd_ { epoll_create1(EPOLL_CLOEXEC) }
         , event_fd_ { event_fd } {
         if (epoll_fd_ == -1) [[unlikely]] {
-            throw std::runtime_error("EpollReactor: Unable to create epoll instance. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("EpollReactor(): Unable to create epoll instance. Error: " + std::string(strerror(errno)));
         }
 
         // initialize magic buffers if thread is used to obtain market data
@@ -74,7 +74,7 @@ public:
 
     void add_socket(int fd) {
         if (fd == -1) [[unlikely]] { 
-            throw std::runtime_error("EpollReactor: File descriptor passed in for add_socket is invalid.");
+            throw std::runtime_error("EpollReactor::add_socket(): File descriptor passed in for add_socket is invalid.");
         }
 
         struct epoll_event event{};
@@ -84,7 +84,7 @@ public:
 
         int rc = epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, fd, &event);
         if (rc == -1) {
-            throw std::runtime_error("EpollReactor: Unable to add file descriptor to epoll interest list. Error: " + std::string(strerror(errno)));
+            throw std::runtime_error("EpollReactor::add_socket(): Unable to add file descriptor to epoll interest list. Error: " + std::string(strerror(errno)));
         }
     }
 
@@ -101,7 +101,7 @@ public:
         pthread_t current_thread = pthread_self();
         int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t),  &cpu_set);
         if (ret != 0) [[unlikely]] {
-            throw std::runtime_error("EpollReactor: Unable to pin connections thread to Core 0. Error Code: " + std::to_string(ret));
+            throw std::runtime_error("EpollReactor::wait_for_connections(): Unable to pin connections thread to Core 0. Error Code: " + std::to_string(ret));
         }
 
         while (true) {
@@ -112,7 +112,7 @@ public:
             uint64_t dummy = 1; // used to signal a connection has been added
             int bytes_written = write(event_fd_, &dummy, sizeof(uint64_t));
             if (bytes_written == -1) [[unlikely]] {
-                throw std::runtime_error("EpollReactor: Unable to write to event_fd for new connection. Error: " + std::string(strerror(errno)));
+                throw std::runtime_error("EpollReactor::wait_for_connections(): Unable to write to event_fd for new connection. Error: " + std::string(strerror(errno)));
             }
         }
     }
@@ -131,7 +131,7 @@ public:
                 if (errno == EINTR) {
                     continue;
                 }
-                throw std::runtime_error("EpollReactor: Unexpected error occurred during epoll_wait. Error: " + std::string(strerror(errno)));
+                throw std::runtime_error("EpollReactor::run(): Unexpected error occurred during epoll_wait. Error: " + std::string(strerror(errno)));
             }
     
             bool has_new_connections = false;
@@ -185,7 +185,7 @@ public:
                 int rc = read(event_fd_, &dummy, sizeof(uint64_t));
                 
                 if (rc == -1) [[unlikely]] {
-                    throw std::runtime_error("EpollReactor: Unexpected error occured when clearing event_fd. Error: " + std::string(strerror(errno)));
+                    throw std::runtime_error("EpollReactor::run(): Unexpected error occured when clearing event_fd. Error: " + std::string(strerror(errno)));
                 }
             }
         }

@@ -44,7 +44,7 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
     pthread_t current_thread = pthread_self();
     int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpu_set);
     if (ret != 0) [[unlikely]] {
-        throw std::runtime_error("LOB Thread: Unable to pin LOB thread to Core 2. Error Code: " + std::to_string(ret));
+        throw std::runtime_error("LOB Thread::consume(): Unable to pin LOB thread to Core 2. Error Code: " + std::to_string(ret));
     }
     
     while (true) {

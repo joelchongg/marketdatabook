@@ -42,7 +42,7 @@ public:
         void* map_addr = mmap(NULL, page_aligned_bytes_needed, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0);
 
         if (map_addr == MAP_FAILED) [[unlikely]] {
-            throw std::runtime_error("StaticOrderMap: Unable to allocate memory for StaticOrderMap.");
+            throw std::runtime_error("StaticOrderMap(): Unable to allocate memory for StaticOrderMap.");
         }
 
         map_ = reinterpret_cast<Bucket *>(map_addr);
@@ -89,7 +89,7 @@ public:
                 return p.first->pool_idx;
             }
 
-            throw std::runtime_error("StaticOrderMap (operator[]): Map is full, unable to allocate any more elements.");
+            throw std::runtime_error("StaticOrderMap::operator[]: Map is full, unable to allocate any more elements.");
         }
 
         return found->pool_idx;
@@ -151,7 +151,7 @@ public:
 
     void erase(Bucket* entry_ptr) {
         if (entry_ptr < map_ || entry_ptr >= end_) [[unlikely]] {
-            throw std::runtime_error("StaticOrderMap: Unable to erase an element that is not from the map.");
+            throw std::runtime_error("StaticOrderMap::erase(): Unable to erase an element that is not from the map.");
         }
 
         entry_ptr->state = BucketState::Tombstone;
