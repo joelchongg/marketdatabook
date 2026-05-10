@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include "book/LimitOrderBook.h"
-#include "protocol/OrderTypes.h"
+#include "protocol/ItchOrderTypes.h"
 
 #include <map>
 #include <unordered_map>

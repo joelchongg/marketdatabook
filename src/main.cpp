@@ -3,7 +3,7 @@
 #include "network/MulticastReceiver.h"
 #include "network/TCPSocket.h"
 #include "protocol/ItchParser.h"
-#include "protocol/OrderTypes.h"
+#include "protocol/ItchOrderTypes.h"
 #include "utils/spscqueue.h"
 #include "utils/MmapLogger.h"
 

@@ -8,7 +8,7 @@
 #include<stdexcept>
 #include <vector>
 
-#include "protocol/OrderTypes.h"
+#include "protocol/ItchOrderTypes.h"
 #include "utils/HierarchicalBitset.h"
 #include "utils/MagicBuffer.h"
 #include "utils/StaticOrderMap.h"
