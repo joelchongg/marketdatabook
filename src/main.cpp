@@ -4,9 +4,13 @@
 #include "network/TCPSocket.h"
 #include "protocol/ItchParser.h"
 #include "protocol/ItchOrderTypes.h"
+#include "telemetry/TelemetryEngine.h"
+#include "telemetry/TSC_Clock.h"
 #include "utils/spscqueue.h"
 #include "utils/MmapLogger.h"
 
+#include <fstream>
+#include <iostream>
 #include <immintrin.h>
 #include <sys/eventfd.h>
 #include <pthread.h>
@@ -33,6 +37,39 @@ struct OrderBookCallBack {
     }
 };
 
+template <typename T, size_t QUEUE_SIZE, size_t TELEMETRY_BUFFER_SIZE, size_t NUM_BUFFERS>
+void log_telemetry(utils::SPSCQueue<T, QUEUE_SIZE>& tel_queue, 
+                   std::array<std::array<std::tuple<uint64_t, uint64_t, uint64_t>, TELEMETRY_BUFFER_SIZE>, NUM_BUFFERS>& bufs) {
+    // pin to core 6 (away from all other threads)
+    cpu_set_t cpu_set;
+    CPU_ZERO(&cpu_set);
+    CPU_SET(6, &cpu_set);
+
+    // make sure with perf that there is no thread migration (or at most 1 when setaffinity is called)
+    pthread_t current_thread = pthread_self();
+    int ret = pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpu_set);
+    if (ret != 0) [[unlikely]] {
+        throw std::runtime_error("Telemetry Logging Thread: Unable to pin thread to Core 6. Error Code: " + std::to_string(ret));
+    }
+
+
+    std::ofstream output_file("telemetry_log.txt", std::ios::binary | std::ios::out);
+    if (!output_file) [[unlikely]] {
+        std::cerr << "Failed to open teleetry file!" << std::endl;
+        return;
+    }
+
+    while (true) {
+        size_t buf_idx;
+        while (!tel_queue.pop(buf_idx)) { _mm_pause(); }        
+
+        output_file.write(reinterpret_cast<const char*>(bufs[buf_idx].data()),
+                    sizeof(std::tuple<uint64_t, uint64_t, uint64_t>) * TELEMETRY_BUFFER_SIZE);
+    }
+
+    output_file.close();
+}
+
 template <typename T, size_t QUEUE_SIZE>
 void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book) {
     // pin to core 2 (beside epoll thread to minimize inter-core latency)
@@ -46,12 +83,39 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
     if (ret != 0) [[unlikely]] {
         throw std::runtime_error("LOB Thread::consume(): Unable to pin LOB thread to Core 2. Error Code: " + std::to_string(ret));
     }
+
+    // create telemetry objects used for profiling
+    uint64_t l1d_miss_config = (PERF_COUNT_HW_CACHE_L1D) |
+                               (PERF_COUNT_HW_CACHE_OP_READ << 8) |
+                               (PERF_COUNT_HW_CACHE_RESULT_MISS << 16);
     
+    telemetry::TelemetryEngine l1d_te(PERF_TYPE_HW_CACHE, l1d_miss_config);
+    telemetry::TelemetryEngine branch_te(PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES);
+    telemetry::TSC_Clock clock;
+
+    constexpr size_t NUM_BUFFERS = 2;
+    constexpr size_t TELEMETRY_BUFFER_SIZE = 16384; // arbitrary value (power of 2 to allow bitwise for modulo)
+    std::array<std::array<std::tuple<uint64_t, uint64_t, uint64_t>, TELEMETRY_BUFFER_SIZE>, NUM_BUFFERS> buffers;
+    utils::SPSCQueue<size_t, 2> telemetry_handoff_queue;    // used to pass buffer to another thread to perform the logging of profiling data
+    size_t active_buf { 0 };
+    size_t tel_idx { 0 };
+
+    // create telemetry thread used to log results
+    std::thread telemetry_thread{[&telemetry_handoff_queue, &buffers]() {
+        log_telemetry(telemetry_handoff_queue, buffers);
+    }};
+
+
     while (true) {
         T order;
         while (!queue.pop(order)) { _mm_pause(); };
         // debugging
         // std::cout << "Consuming order...\n";
+
+        // measurements start
+        uint64_t start_l1d = l1d_te.read_pmc();
+        uint64_t start_branches = branch_te.read_pmc();
+        uint64_t start_tsc = clock.rdtsc_start();
 
         std::visit([&](auto& order) {
             if constexpr (std::is_same_v<std::decay_t<decltype(order)>, protocol::NormalizedAddOrder>) {
@@ -62,6 +126,27 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
                 book.cancel_order(order.order_reference_number);
             }
         }, order);
+
+        // measurements end
+        uint64_t end_tsc = clock.rdtsc_end();
+        uint64_t end_branches = branch_te.read_pmc();
+        uint64_t end_l1d = l1d_te.read_pmc();
+
+        // record measurements if needed
+        uint64_t tsc_delta = end_tsc - start_tsc;
+        uint64_t l1d_delta = end_l1d - start_l1d;
+        uint64_t branch_delta = end_branches - start_branches;
+
+
+        buffers[active_buf][tel_idx] = {tsc_delta, l1d_delta, branch_delta};
+        tel_idx = (tel_idx + 1) & (TELEMETRY_BUFFER_SIZE - 1);
+
+        // tuned based on requirements
+        if (l1d_delta > 1000 || tsc_delta > 5000) [[unlikely]] {
+            telemetry_handoff_queue.push(active_buf);
+            active_buf = 1 - active_buf;
+            tel_idx = 0;
+        }
     }
 }
 

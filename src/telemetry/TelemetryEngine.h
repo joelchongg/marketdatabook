@@ -15,7 +15,7 @@ namespace telemetry {
 
 class TelemetryEngine {
 public:
-    TelemetryEngine(enum perf_type_id event_id, uint64_t config) {
+    TelemetryEngine(enum perf_type_id type, uint64_t config) {
         struct perf_event_attr event_attr;
         memset(&event_attr, 0, sizeof(event_attr));
 
@@ -23,14 +23,14 @@ public:
         event_attr.exclude_kernel = 1;
         event_attr.exclude_hv = 1;
         event_attr.exclude_idle = 1;
-        event_attr.type = event_id;
+        event_attr.type = type;
         event_attr.config = config;
         event_attr.size = sizeof(event_attr);
 
         int fd = syscall(SYS_perf_event_open, &event_attr, 0, -1, -1, PERF_FLAG_FD_CLOEXEC | PERF_FLAG_FD_NO_GROUP);
         if (fd == -1) [[unlikely]] {
-            throw std::runtime_error("TelemetryEngine(): Unable to open new perf event for event_id: " 
-                + std::to_string(event_id) + ". Error: " + strerror(errno));
+            throw std::runtime_error("TelemetryEngine(): Unable to open new perf event for type: " 
+                + std::to_string(type) + " and config: " + std::to_string(config) + ". Error: " + strerror(errno));
         }
         fd_ = fd;
 
