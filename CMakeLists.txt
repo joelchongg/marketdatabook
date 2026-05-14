@@ -6,6 +6,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# enable when we want to profile using user space telemetry or when we run on a valid machine
+option(ENABLE_HW_TELEMETRY "Enable physical PMU hardware counters" OFF)
+if (ENABLE_HW_TELEMETRY)
+    add_compile_definitions(ENABLE_HW_TELEMETRY)
+endif()
+
 # Set Compiler Flags
 set(MarketDataBook_FLAGS 
     # "-O0" # Disable if not debugging
