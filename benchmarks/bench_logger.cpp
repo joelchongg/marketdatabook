@@ -45,7 +45,7 @@ int main() {
     // warm up cache
     for (size_t i = 0; i < 100'000; ++i) {
         event.order_id = i;
-        logger.append(event);
+        logger.append(&event, sizeof(LogEvent));
     }
 
     // capture get_tsc_start and get_tsc_end overhead
@@ -61,7 +61,7 @@ int main() {
 
     for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
         event.order_id = i;
-        logger.append(event);
+        logger.append(&event, sizeof(LogEvent));
         asm volatile("" : : : "memory");
     }
 
