@@ -196,6 +196,29 @@ public:
     }
 
     /*
+    * Same functionality as poll() but used during simulation
+    */
+    void poll_simulation() {
+        while (true) {
+            char* start_of_frame = ring_ + (curr_frame_idx_ * RX_FRAME_SIZE);
+            struct tpacket2_hdr* packet = reinterpret_cast<struct tpacket2_hdr *>(start_of_frame);
+            std::atomic_ref<unsigned int> status(packet->tp_status);
+            while ((status.load(std::memory_order_acquire) & TP_STATUS_USER) == 0) { _mm_pause(); }
+
+            // get start of data by pointer arithmetic past header bytes and parse data
+            // IP Header 20 Bytes, UDP header 8 bytes
+            char* payload_ptr = start_of_frame + packet->tp_net;
+            int payload_length = packet->tp_snaplen;
+            handler_.parse_block(payload_ptr, payload_length);
+
+            // return frame to kernel
+            status.store(TP_STATUS_KERNEL, std::memory_order_release);
+            curr_frame_idx_ = (curr_frame_idx_ + 1) % RX_FRAME_NR;
+            total_packets.fetch_add(1, std::memory_order_relaxed);
+        } 
+    }
+
+    /*
     * This function is used to obtain statistics regarding received and dropped packets
     * This function is used to ensure that packets are not dropped and we can process packets at an optimal speed.
     */
@@ -264,7 +287,11 @@ public:
 
         struct stat buf;
         fstat(fd, &buf);
+#ifdef ENABLE_HW_TELEMETRY
         void* data_addr = mmap(NULL, buf.st_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
+#else
+        void* data_addr = mmap(NULL, buf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+#endif
         if (data_addr == MAP_FAILED) [[unlikely]] {
             throw std::runtime_error("MulticastReceiver::simulate_packets(): Unable to mmap for file " + filename + ". Error: " + std::string(strerror(errno)));
         }
@@ -275,33 +302,35 @@ public:
             throw std::runtime_error("MulticastReceiver::simulate_packets(): Unable to set MADV_SEQUENTIAL for simulating packets. Error: " + std::string(strerror(errno)));
         }
 
-        // skip global header
-        data += sizeof(utils::pcap_global_hdr);
-        utils::pcap_packet_hdr* packet_hdr_ptr = reinterpret_cast<utils::pcap_packet_hdr *>(data);
         int frame_idx = 0;
         while (data < data_end) {
+            if (data + 2 > data_end) break;
+
+            uint16_t message_len = ntohs(*reinterpret_cast<uint16_t*>(data));
+            data += 2;
+
+            if (data + message_len > data_end) break;
+
             char* curr_frame_ptr = ring_ + (frame_idx * RX_FRAME_SIZE);
             struct tpacket2_hdr* frame_hdr_ptr = reinterpret_cast<struct tpacket2_hdr *>(curr_frame_ptr);
             std::atomic_ref<unsigned int> status(frame_hdr_ptr->tp_status);
             while (status.load(std::memory_order_acquire) & TP_STATUS_USER) { _mm_pause(); }
 
             // set frame header information
-            frame_hdr_ptr->tp_sec = packet_hdr_ptr->ts_sec;
-            frame_hdr_ptr->tp_nsec = packet_hdr_ptr->ts_usec * 1000;
-            frame_hdr_ptr->tp_snaplen = packet_hdr_ptr->incl_len;
-            frame_hdr_ptr->tp_len = packet_hdr_ptr->orig_len;
+            frame_hdr_ptr->tp_snaplen = message_len;
+            frame_hdr_ptr->tp_len = message_len;
             frame_hdr_ptr->tp_mac = TPACKET_ALIGN(sizeof(struct tpacket2_hdr));
-            frame_hdr_ptr->tp_net = frame_hdr_ptr->tp_mac + ETH_HLEN;
+            frame_hdr_ptr->tp_net = frame_hdr_ptr->tp_mac;
 
             // set payload
-            if (data + sizeof(utils::pcap_packet_hdr) + packet_hdr_ptr->incl_len > data_end) break;
-            std::memcpy(curr_frame_ptr + frame_hdr_ptr->tp_mac, data + sizeof(utils::pcap_packet_hdr), packet_hdr_ptr->incl_len); 
+            std::memcpy(curr_frame_ptr + frame_hdr_ptr->tp_mac, data, message_len); 
 
             status.store(TP_STATUS_USER, std::memory_order_release);
-            data += sizeof(utils::pcap_packet_hdr) + packet_hdr_ptr->incl_len;
-            packet_hdr_ptr = reinterpret_cast<utils::pcap_packet_hdr *>(data);
+            data += message_len;
             frame_idx = (frame_idx + 1) % RX_FRAME_NR;
         }
+
+        std::cout << "End of data!\n";
 
         close(fd);
         munmap(data_addr, buf.st_size);

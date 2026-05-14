@@ -53,9 +53,9 @@ void log_telemetry(utils::SPSCQueue<T, QUEUE_SIZE>& tel_queue,
     }
 
 
-    std::ofstream output_file("telemetry_log.txt", std::ios::binary | std::ios::out);
+    std::ofstream output_file("./logs/telemetry_log.txt", std::ios::binary | std::ios::out);
     if (!output_file) [[unlikely]] {
-        std::cerr << "Failed to open teleetry file!" << std::endl;
+        std::cerr << "Failed to open telemetry file!" << std::endl;
         return;
     }
 
@@ -165,11 +165,11 @@ void run_mock_mode() {
     std::thread statistics_thread{&network::MulticastReceiver<decltype(parser)>::print_statistics_mock_mode, std::ref(poller)};
 
     // launch thread to simulate kernel packets (pinned to core 0)
-    const std::string PCAP_FILENAME = "pcap_file.pcap";
+    const std::string PCAP_FILENAME = "./files/01302019.NASDAQ_ITCH50";
     std::thread kernel_packet_thread{&network::MulticastReceiver<decltype(parser)>::simulate_packets, std::ref(poller), PCAP_FILENAME};
 
-    // main thread runs polling
-    poller.poll();
+    // main thread runs polling simulation
+    poller.poll_simulation();
 }
 
 int main() {
