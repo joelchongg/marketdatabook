@@ -13,6 +13,7 @@ namespace telemetry {
 */
 class TSC_Clock {
 public:
+#ifdef ENABLE_HW_TELEMETRY
     /*
     * Used to determine the base frequency of the CPU that the
     * current thread / process is running on.
@@ -46,6 +47,11 @@ public:
         _mm_lfence();
         return tsc;
     }
+#else
+    unsigned int calibrate_frequency() { return 0; }
+    uint64_t rdtsc_start() { return 0; }
+    uint64_t rdtsc_end() { return 0; }
+#endif
 };
 
 } // namespace telemetry

@@ -15,6 +15,7 @@ namespace telemetry {
 
 class TelemetryEngine {
 public:
+#ifdef ENABLE_HW_TELEMETRY
     TelemetryEngine(enum perf_type_id type, uint64_t config) {
         struct perf_event_attr event_attr;
         memset(&event_attr, 0, sizeof(event_attr));
@@ -62,10 +63,18 @@ public:
 
         return __rdpmc(id - 1);
     }
+#else
+    TelemetryEngine([[maybe_unused]] enum perf_type_id type, [[maybe_unused]] uint64_t config) {}
+    ~TelemetryEngine() {}
+
+    __always_inline uint64_t read_pmc() const { return 0; }
+#endif
 
 private:
+#ifdef ENABLE_HW_TELEMETRY
     perf_event_mmap_page* metadata_ { nullptr };
     int fd_ { -1 };
+#endif
 };
 
 } // namespace telemetry
