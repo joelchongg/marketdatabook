@@ -84,7 +84,7 @@ public:
 
     void cancel_order(uint64_t order_id) {
         auto it = orders_.find(order_id);
-        if (it == orders_.end()) {
+        if (it == nullptr) {
             // order does not exist
             return;
         }
@@ -103,7 +103,7 @@ public:
 
     void execute_order(protocol::NormalizedOrderExecuted& order) {
         auto it = orders_.find(order.order_reference_number);
-        if (it == orders_.end()) {
+        if (it == nullptr) {
             return;
         }
 
