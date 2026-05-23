@@ -10,44 +10,66 @@ class SPSCQueue {
 
 public:
     bool push(T& input) {
-        size_t tail_idx = tail_.load(std::memory_order_relaxed);
+        size_t tail_idx = producer_.tail_.load(std::memory_order_relaxed);
         size_t next_tail_idx = (tail_idx + 1) & (Size - 1);
-        if (head_.load(std::memory_order_acquire) == ((tail_idx + 1) & (Size - 1))) {
-            return false;
+        if (producer_.cached_head_ == next_tail_idx) {
+            producer_.cached_head_ = consumer_.head_.load(std::memory_order_acquire);
+
+            if (producer_.cached_head_ == next_tail_idx) [[unlikely]] {
+                return false;
+            }
         }
 
         data_[tail_idx] = input;
-        tail_.store(next_tail_idx, std::memory_order_release);
+        producer_.tail_.store(next_tail_idx, std::memory_order_release);
         return true;
     }
 
     bool push(T&& input) {
-        size_t tail_idx = tail_.load(std::memory_order_relaxed);
+        size_t tail_idx = producer_.tail_.load(std::memory_order_relaxed);
         size_t next_tail_idx = (tail_idx + 1) & (Size - 1);
-        if (head_.load(std::memory_order_acquire) == next_tail_idx) {
-            return false;
+        if (producer_.cached_head_ == next_tail_idx) {
+            producer_.cached_head_ = consumer_.head_.load(std::memory_order_acquire);
+            
+            if (producer_.cached_head_ == next_tail_idx) [[unlikely]] {
+                return false;
+            }
         }
 
         data_[tail_idx] = std::move(input);
-        tail_.store(next_tail_idx, std::memory_order_release);
+        producer_.tail_.store(next_tail_idx, std::memory_order_release);
         return true;
     }
 
     bool pop(T& output) {
-        size_t head_idx = head_.load(std::memory_order_relaxed);
+        size_t head_idx = consumer_.head_.load(std::memory_order_relaxed);
         size_t next_head_idx = (head_idx + 1) & (Size - 1);
-        if (head_idx == tail_.load(std::memory_order_acquire)) {
-            return false;
+        if (head_idx == consumer_.cached_tail_) {
+            consumer_.cached_tail_ = producer_.tail_.load(std::memory_order_acquire);
+
+            if (head_idx == consumer_.cached_tail_) [[unlikely]] {
+                return false;
+            }
         }
         
         output = std::move(data_[head_idx]);
-        head_.store(next_head_idx, std::memory_order_release);
+        consumer_.head_.store(next_head_idx, std::memory_order_release);
         return true;
     }
 
 private:
-    alignas(64) std::atomic<size_t> head_ { 0 };
-    alignas(64) std::atomic<size_t> tail_ { 0 };
+    struct alignas(64) ProducerState {
+        std::atomic<size_t> tail_ { 0 };
+        size_t cached_head_ { 0 };
+    };
+
+    struct alignas(64) ConsumerState {
+        std::atomic<size_t> head_ { 0 };
+        size_t cached_tail_ { 0 };
+    };
+
+    ProducerState producer_;
+    ConsumerState consumer_;
     T data_[Size];
 };
 
