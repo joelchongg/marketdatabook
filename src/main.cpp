@@ -21,7 +21,7 @@
 #define MULTICAST_IP_ADDR "224.0.0.0"
 #define MOCK_MODE true
 
-using Orders = std::variant<protocol::NormalizedAddOrder, protocol::NormalizedOrderExecuted, protocol::NormalizedCancelOrder>;
+using Orders = protocol::NormalizedOrder;
 
 struct OrderBookCallBack {
     void operator()(book::LimitOrderBook& book, protocol::NormalizedAddOrder& new_order) {
@@ -70,8 +70,8 @@ void log_telemetry(utils::SPSCQueue<T, QUEUE_SIZE>& tel_queue,
     output_file.close();
 }
 
-template <typename T, size_t QUEUE_SIZE>
-void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book) {
+template <size_t QUEUE_SIZE>
+void consume(utils::SPSCQueue<protocol::NormalizedOrder, QUEUE_SIZE>& queue, book::LimitOrderBook& book) {
     // pin to core 2 (beside epoll thread to minimize inter-core latency)
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
@@ -105,9 +105,15 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
         log_telemetry(telemetry_handoff_queue, buffers);
     }};
 
+    // dispatch table to avoid std::variant branching
+    static constexpr void (*dispatch_table[4])(book::LimitOrderBook&, const protocol::NormalizedOrder&) = {
+        [](book::LimitOrderBook& b, const protocol::NormalizedOrder& o) { b.add_order(o.add_order); },
+        [](book::LimitOrderBook& b, const protocol::NormalizedOrder& o) { b.execute_order(o.execute_order); },
+        [](book::LimitOrderBook& b, const protocol::NormalizedOrder& o) { b.cancel_order(o.cancel_order.order_reference_number); }
+    };
 
     while (true) {
-        T order;
+        protocol::NormalizedOrder order;
         while (!queue.pop(order)) { _mm_pause(); };
         // debugging
         // std::cout << "Consuming order...\n";
@@ -117,15 +123,8 @@ void consume(utils::SPSCQueue<T, QUEUE_SIZE>& queue, book::LimitOrderBook& book)
         uint64_t start_branches = branch_te.read_pmc();
         uint64_t start_tsc = clock.rdtsc_start();
 
-        std::visit([&](auto& order) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(order)>, protocol::NormalizedAddOrder>) {
-                book.add_order(order);
-            } else if constexpr (std::is_same_v<std::decay_t<decltype(order)>, protocol::NormalizedOrderExecuted>) {
-                book.execute_order(order);
-            } else if constexpr (std::is_same_v<std::decay_t<decltype(order)>, protocol::NormalizedCancelOrder>) {
-                book.cancel_order(order.order_reference_number);
-            }
-        }, order);
+        // index the dispatch table based on the order type enum
+        dispatch_table[static_cast<uint8_t>(order.type) & 0xFF](book, order);
 
         // measurements end
         uint64_t end_tsc = clock.rdtsc_end();
@@ -159,7 +158,7 @@ void run_mock_mode() {
     network::MulticastReceiver poller(parser, true);
 
     // launch consumer thread (pinned to core 2)
-    std::thread lob_thread{consume<Orders, 4096>, std::ref(queue), std::ref(book)};
+    std::thread lob_thread{consume<4096>, std::ref(queue), std::ref(book)};
 
     // launch statistics thread (pinned to core 7)
     std::thread statistics_thread{&network::MulticastReceiver<decltype(parser)>::print_statistics_mock_mode, std::ref(poller)};
@@ -201,7 +200,7 @@ int main() {
     network::MulticastReceiver poller {parser, HOST_INTERFACE, MULTICAST_IP_ADDR};
 
     // launch consumer thread
-    std::thread lob_thread{consume<Orders, 4096>, std::ref(queue), std::ref(book)};
+    std::thread lob_thread{consume<4096>, std::ref(queue), std::ref(book)};
 
     // debug: launch separate thread for printing statistics
     std::thread packet_stats_thread{&network::MulticastReceiver<decltype(parser)>::print_statistics, std::ref(poller)};

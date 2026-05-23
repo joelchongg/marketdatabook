@@ -101,7 +101,7 @@ public:
         }
     }
 
-    void execute_order(protocol::NormalizedOrderExecuted& order) {
+    void execute_order(const protocol::NormalizedOrderExecuted& order) {
         auto it = orders_.find(order.order_reference_number);
         if (it == nullptr) {
             return;

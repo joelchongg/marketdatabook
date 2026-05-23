@@ -86,7 +86,7 @@ public:
     }
 
 private:
-    constexpr static const uint8_t message_length_table[256] = {
+    constexpr static uint8_t message_length_table[256] = {
         0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
         0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
         0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
@@ -111,13 +111,16 @@ private:
     void parse_add_order(const void* raw_data, Header& header) {
         const AddOrder* data = reinterpret_cast<const AddOrder*>(raw_data);
 
-        NormalizedAddOrder new_order;
-        new_order.timestamp = header.timestamp;
-        new_order.order_reference_number = header.order_reference_number;
-        new_order.shares = __builtin_bswap32(data->shares);
-        new_order.price = __builtin_bswap32(data->price);
-        std::memcpy(&new_order.stock, &data->stock, 8);
-        new_order.indicator = data->indicator;
+        NormalizedOrder new_order{};
+        NormalizedAddOrder& new_add_order = new_order.add_order;
+        new_order.type = protocol::OrderType::AddOrder;
+
+        new_add_order.timestamp = header.timestamp;
+        new_add_order.order_reference_number = header.order_reference_number;
+        new_add_order.shares = __builtin_bswap32(data->shares);
+        new_add_order.price = __builtin_bswap32(data->price);
+        std::memcpy(&new_add_order.stock, &data->stock, 8);
+        new_add_order.indicator = data->indicator;
 
         queue_.push(std::move(new_order));
     }
@@ -125,14 +128,17 @@ private:
     void parse_executed_order(const void* raw_data, Header& header) {
         const OrderExecuted* data = reinterpret_cast<const OrderExecuted*>(raw_data);
         
+        NormalizedOrder new_order{};
+        NormalizedOrderExecuted& new_executed_order = new_order.execute_order;
+        new_order.type = protocol::OrderType::ExecuteOrder;
+
         // check if AVX instructions can be used
-        NormalizedOrderExecuted new_order;
-        new_order.timestamp = header.timestamp;
-        new_order.order_reference_number = header.order_reference_number;
-        new_order.match_number = __builtin_bswap64(data->match_number);
-        new_order.shares = __builtin_bswap32(data->shares);
-        new_order.stock_locate = header.stock_locate;
-        new_order.tracking_number = header.tracking_number;
+        new_executed_order.timestamp = header.timestamp;
+        new_executed_order.order_reference_number = header.order_reference_number;
+        new_executed_order.match_number = __builtin_bswap64(data->match_number);
+        new_executed_order.shares = __builtin_bswap32(data->shares);
+        new_executed_order.stock_locate = header.stock_locate;
+        new_executed_order.tracking_number = header.tracking_number;
 
         queue_.push(std::move(new_order));
     }
@@ -140,12 +146,15 @@ private:
     void parse_cancel_order(const void* raw_data, Header& header) {
         const CancelOrder* data = reinterpret_cast<const CancelOrder*>(raw_data);
 
-        NormalizedCancelOrder new_order;
-        new_order.timestamp = header.timestamp;
-        new_order.order_reference_number = header.order_reference_number;
-        new_order.shares = __builtin_bswap32(data->shares);
-        new_order.stock_locate = header.stock_locate;
-        new_order.tracking_number = header.tracking_number;
+        NormalizedOrder new_order{};
+        NormalizedCancelOrder& new_cancel_order = new_order.cancel_order;
+        new_order.type = protocol::OrderType::CancelOrder;
+
+        new_cancel_order.timestamp = header.timestamp;
+        new_cancel_order.order_reference_number = header.order_reference_number;
+        new_cancel_order.shares = __builtin_bswap32(data->shares);
+        new_cancel_order.stock_locate = header.stock_locate;
+        new_cancel_order.tracking_number = header.tracking_number;
 
         queue_.push(std::move(new_order));
     }

@@ -4,6 +4,13 @@
 
 namespace protocol {
 
+// used to replace std::visit with a jump table
+enum class OrderType : uint8_t {
+    AddOrder,
+    ExecuteOrder,
+    CancelOrder
+};
+
 // The header struct consists of all fields that are common to all order types
 struct Header {
     uint64_t timestamp;
@@ -79,6 +86,15 @@ struct NormalizedCancelOrder {
     uint32_t shares;
     uint16_t stock_locate;
     uint16_t tracking_number;
+};
+
+struct NormalizedOrder {
+    OrderType type;
+    union {
+        NormalizedAddOrder add_order;
+        NormalizedOrderExecuted execute_order;
+        NormalizedCancelOrder cancel_order;
+    };
 };
 
 static_assert(sizeof(AddOrder) == 36, "AddOrder is not packed into 36 bytes");
