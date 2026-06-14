@@ -1,13 +1,11 @@
 #include "book/LimitOrderBook.h"
-#include "network/EpollReactor.h"
 #include "network/MulticastReceiver.h"
-#include "network/TCPSocket.h"
 #include "protocol/ItchParser.h"
 #include "protocol/ItchOrderTypes.h"
 #include "telemetry/TelemetryEngine.h"
 #include "telemetry/TSC_Clock.h"
 #include "utils/spscqueue.h"
-#include "utils/MmapLogger.h"
+#include "recovery/MmapLogger.h"
 
 #include <fstream>
 #include <iostream>
@@ -15,7 +13,6 @@
 #include <sys/eventfd.h>
 #include <pthread.h>
 #include <thread>
-#include <variant>
 
 #define HOST_INTERFACE "eth0"
 #define MULTICAST_IP_ADDR "224.0.0.0"
@@ -168,7 +165,7 @@ void consume(utils::SPSCQueue<protocol::NormalizedOrder, QUEUE_SIZE>& queue, boo
 }
 
 void run_mock_mode() {
-    utils::MmapLogger logger("logs/event_logs.txt");
+    recovery::MmapLogger logger("logs/event_logs.txt");
     utils::SPSCQueue<Orders, 4096> queue;
     book::LimitOrderBook book(1000);
 
@@ -209,7 +206,7 @@ int main() {
     }
 
     // create logging file
-    utils::MmapLogger logger("logs/event_logs.txt");
+    recovery::MmapLogger logger("logs/event_logs.txt");
 
     utils::SPSCQueue<Orders, 4096> queue;
     book::LimitOrderBook book(1000);
