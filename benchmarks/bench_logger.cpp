@@ -1,5 +1,6 @@
 #include "bench_utils.h"
-#include "utils/MmapLogger.h"
+#include "recovery/MmapLogger.h"
+#include "utils/WalFrame.h"
 
 #include <limits>
 #include <random>
@@ -39,13 +40,16 @@ int main() {
     constexpr size_t NUM_ITERATIONS = 10'000'000;
 
     const char* filepath = "./logs/mmap_logger_bench_results.txt";
-    utils::MmapLogger logger(filepath);
+    recovery::MmapLogger logger(filepath);
 
-    LogEvent event{};
     // warm up cache
     for (size_t i = 0; i < 100'000; ++i) {
-        event.order_id = i;
-        logger.append(&event, sizeof(LogEvent));
+        recovery::WalFrame* frame_ptr = logger.reserve_frame();
+        frame_ptr->marker = 0xAA;
+        frame_ptr->msg_type = 'X';
+        frame_ptr->channel_id = 1;
+        frame_ptr->seq_num = 0;
+        frame_ptr->timestamp = __rdtsc();
     }
 
     // capture get_tsc_start and get_tsc_end overhead
@@ -60,8 +64,12 @@ int main() {
     uint64_t start = telemetry::get_tsc_start();
 
     for (size_t i = 0; i < NUM_ITERATIONS; ++i) {
-        event.order_id = i;
-        logger.append(&event, sizeof(LogEvent));
+        recovery::WalFrame* frame_ptr = logger.reserve_frame();
+        frame_ptr->marker = 0xAA;
+        frame_ptr->msg_type = 'X';
+        frame_ptr->channel_id = 1;
+        frame_ptr->seq_num = 0;
+        frame_ptr->timestamp = __rdtsc();
         asm volatile("" : : : "memory");
     }
 

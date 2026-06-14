@@ -1,6 +1,6 @@
 #include "bench_utils.h"
 
-#include "utils/MmapLogger.h"
+#include "recovery/MmapLogger.h"
 #include <unistd.h>
 
 struct alignas(32) LogEvent {
