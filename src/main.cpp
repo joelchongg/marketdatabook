@@ -20,6 +20,7 @@
 #define HOST_INTERFACE "eth0"
 #define MULTICAST_IP_ADDR "224.0.0.0"
 #define MOCK_MODE true
+#define CORRECTNESS_CHECK
 
 using Orders = protocol::NormalizedOrder;
 
@@ -122,6 +123,23 @@ void consume(utils::SPSCQueue<protocol::NormalizedOrder, QUEUE_SIZE>& queue, boo
         uint64_t start_l1d = l1d_te.read_pmc();
         uint64_t start_branches = branch_te.read_pmc();
         uint64_t start_tsc = clock.rdtsc_start();
+
+#ifdef CORRECTNESS_CHECK
+        static int add_count = 0;
+        if (add_count < 10 && order.type == protocol::OrderType::AddOrder) {
+            // Safely extract the 8-byte string and null-terminate it for printing
+            char stock_str[9];
+            std::memcpy(stock_str, &order.add_order.stock, 8);
+            stock_str[8] = '\0';
+
+            printf("[C++] Add Order -> ID: %lu | Stock: '%s' | Shares: %u | Price: %u\n",
+                order.add_order.order_reference_number, 
+                stock_str, 
+                order.add_order.shares, 
+                order.add_order.price);
+            add_count++;
+        }
+#endif
 
         // index the dispatch table based on the order type enum
         dispatch_table[static_cast<uint8_t>(order.type) & 0xFF](book, order);
