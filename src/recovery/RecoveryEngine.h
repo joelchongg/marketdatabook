@@ -104,6 +104,10 @@ public:
         munmap(start_addr, buf.st_size);
     }
 
+    RecoveryReport get_recovery_report() {
+        return report_;
+    }
+
 private:
     using ItchParserType = protocol::ItchParser<protocol::NormalizedOrder, 4096>; // should correspond to the main ITCH parser object type used
     constexpr static uint8_t VALID_FRAME_MARKER = 0xAA;
