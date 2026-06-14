@@ -1,20 +1,23 @@
 #pragma once
 
 #include "ItchOrderTypes.h"
+#include "recovery/MmapLogger.h"
+#include "utils/crc32.h"
 #include "utils/MagicBuffer.h"
-#include "utils/MmapLogger.h"
 #include "utils/spscqueue.h"
+#include "utils/WalFrame.h"
 
 #include <cstdint>
 #include <cstring>
 #include <iostream> // for debugging, remove eventually
+#include <x86intrin.h>
 
 namespace protocol {
 
 template <typename T, size_t QUEUE_SIZE>
 class ItchParser {
 public:
-    ItchParser(utils::SPSCQueue<T, QUEUE_SIZE>& queue, utils::MmapLogger& logger)
+    ItchParser(utils::SPSCQueue<T, QUEUE_SIZE>& queue, recovery::MmapLogger& logger)
         : queue_ { queue }
         , logger_ { logger }
     { }
@@ -33,56 +36,119 @@ public:
             }
 
             switch (message_type) {
-                case 'A': 
-                    logger_.append(payload_ptr, 36); 
+                case 'A':
+                    log_payload(payload_ptr, 36, 'A');
                     break;
                 case 'E':
-                    logger_.append(payload_ptr, 31);
+                    log_payload(payload_ptr, 31, 'E');
                     break;
                 case 'X':
-                    logger_.append(payload_ptr, 23);
+                    log_payload(payload_ptr, 23, 'X');
                     break;
                 default:
                     // currently unsupported order messages
-                    logger_.append(payload_ptr, message_len);
+                    log_payload(payload_ptr, message_len, '-');
                     payload_ptr += message_len;
                     payload_len -= message_len;
                     continue;
             }
 
-            Header header;
-
-            uint64_t ts = 0;
-            std::memcpy(&ts, payload_ptr + 5, 6);
-            header.timestamp = __builtin_bswap64(ts) >> 16;
-
-            std::memcpy(&header.order_reference_number, payload_ptr + 11, 8);
-            header.order_reference_number = __builtin_bswap64(header.order_reference_number);
-
-            std::memcpy(&header.stock_locate, payload_ptr + 1, 2);
-            header.stock_locate = __builtin_bswap16(header.stock_locate);
-
-            std::memcpy(&header.tracking_number, payload_ptr + 3, 2);
-            header.tracking_number = __builtin_bswap16(header.tracking_number);
+            Header header = extract_header(payload_ptr);
+            NormalizedOrder new_order;
 
             switch (message_type) {
                 case 'A':
-                    parse_add_order(payload_ptr, header);
+                    new_order = parse_add_order(payload_ptr, header);
                     payload_ptr += 36;
                     payload_len -= 36;
                     break;
                 case 'E':
-                    parse_executed_order(payload_ptr, header);
+                    new_order = parse_executed_order(payload_ptr, header);
                     payload_ptr += 31;
                     payload_len -= 31;
                     break;
                 case 'X':
-                    parse_cancel_order(payload_ptr, header);
+                    new_order = parse_cancel_order(payload_ptr, header);
                     payload_ptr += 23;
                     payload_len -= 23;
                     break;
             }
+            queue_.push(std::move(new_order));
         }
+    }
+
+    static NormalizedOrder parse_add_order(const void* raw_data, Header& header) {
+        const AddOrder* data = reinterpret_cast<const AddOrder*>(raw_data);
+
+        NormalizedOrder new_order{};
+        NormalizedAddOrder& new_add_order = new_order.add_order;
+        new_order.type = protocol::OrderType::AddOrder;
+
+        new_add_order.timestamp = header.timestamp;
+        new_add_order.order_reference_number = header.order_reference_number;
+        new_add_order.shares = __builtin_bswap32(data->shares);
+        new_add_order.price = __builtin_bswap32(data->price);
+        std::memcpy(&new_add_order.stock, &data->stock, 8);
+        new_add_order.indicator = data->indicator;
+
+        return new_order;
+    }
+
+    static NormalizedOrder parse_executed_order(const void* raw_data, Header& header) {
+        const OrderExecuted* data = reinterpret_cast<const OrderExecuted*>(raw_data);
+        
+        NormalizedOrder new_order{};
+        NormalizedOrderExecuted& new_executed_order = new_order.execute_order;
+        new_order.type = protocol::OrderType::ExecuteOrder;
+
+        // check if AVX instructions can be used
+        new_executed_order.timestamp = header.timestamp;
+        new_executed_order.order_reference_number = header.order_reference_number;
+        new_executed_order.match_number = __builtin_bswap64(data->match_number);
+        new_executed_order.shares = __builtin_bswap32(data->shares);
+        new_executed_order.stock_locate = header.stock_locate;
+        new_executed_order.tracking_number = header.tracking_number;
+
+        return new_order;
+    }
+
+    static NormalizedOrder parse_cancel_order(const void* raw_data, Header& header) {
+        const CancelOrder* data = reinterpret_cast<const CancelOrder*>(raw_data);
+
+        NormalizedOrder new_order{};
+        NormalizedCancelOrder& new_cancel_order = new_order.cancel_order;
+        new_order.type = protocol::OrderType::CancelOrder;
+
+        new_cancel_order.timestamp = header.timestamp;
+        new_cancel_order.order_reference_number = header.order_reference_number;
+        new_cancel_order.shares = __builtin_bswap32(data->shares);
+        new_cancel_order.stock_locate = header.stock_locate;
+        new_cancel_order.tracking_number = header.tracking_number;
+
+        return new_order;
+    }
+
+    /*
+    * Used only when it is guaranteed payload length >= header length
+    */
+    static Header extract_header(const void* payload) {
+        const uint8_t* payload_ptr = static_cast<const uint8_t*>(payload);
+        Header header;
+        
+        uint64_t ts = 0;
+        std::memcpy(&ts, payload_ptr + 5, 6);
+        header.timestamp = __builtin_bswap64(ts) >> 16;
+
+        std::memcpy(&header.order_reference_number, payload_ptr + 11, 8);
+        header.order_reference_number = __builtin_bswap64(header.order_reference_number);
+
+        std::memcpy(&header.stock_locate, payload_ptr + 1, 2);
+        header.stock_locate = __builtin_bswap16(header.stock_locate);
+
+        std::memcpy(&header.tracking_number, payload_ptr + 3, 2);
+        header.tracking_number = __builtin_bswap16(header.tracking_number);
+
+        return header; // leverage NRVO
     }
 
 private:
@@ -105,59 +171,25 @@ private:
         0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
     };
 
+    void log_payload(const void* payload, size_t message_len, char msg_type) {
+        recovery::WalFrame* wal_frame_ptr = logger_.reserve_frame();
+        if (!wal_frame_ptr) [[unlikely]] {
+            return;
+        }
+
+        // populate WalFrame
+        wal_frame_ptr->marker = 0xAA;
+        wal_frame_ptr->msg_type = msg_type;
+        wal_frame_ptr->channel_id = 1;
+        wal_frame_ptr->seq_num = curr_seq_num++;
+        wal_frame_ptr->timestamp = __rdtsc();   // since we pin thread on 1 CPU we can use __rdtsc()
+        std::memcpy(wal_frame_ptr->payload, payload, message_len);
+        wal_frame_ptr->checksum = utils::calculate_crc32(wal_frame_ptr);
+    }
+
     utils::SPSCQueue<T, QUEUE_SIZE>& queue_;
-    utils::MmapLogger& logger_;
-
-    void parse_add_order(const void* raw_data, Header& header) {
-        const AddOrder* data = reinterpret_cast<const AddOrder*>(raw_data);
-
-        NormalizedOrder new_order{};
-        NormalizedAddOrder& new_add_order = new_order.add_order;
-        new_order.type = protocol::OrderType::AddOrder;
-
-        new_add_order.timestamp = header.timestamp;
-        new_add_order.order_reference_number = header.order_reference_number;
-        new_add_order.shares = __builtin_bswap32(data->shares);
-        new_add_order.price = __builtin_bswap32(data->price);
-        std::memcpy(&new_add_order.stock, &data->stock, 8);
-        new_add_order.indicator = data->indicator;
-
-        queue_.push(std::move(new_order));
-    }
-
-    void parse_executed_order(const void* raw_data, Header& header) {
-        const OrderExecuted* data = reinterpret_cast<const OrderExecuted*>(raw_data);
-        
-        NormalizedOrder new_order{};
-        NormalizedOrderExecuted& new_executed_order = new_order.execute_order;
-        new_order.type = protocol::OrderType::ExecuteOrder;
-
-        // check if AVX instructions can be used
-        new_executed_order.timestamp = header.timestamp;
-        new_executed_order.order_reference_number = header.order_reference_number;
-        new_executed_order.match_number = __builtin_bswap64(data->match_number);
-        new_executed_order.shares = __builtin_bswap32(data->shares);
-        new_executed_order.stock_locate = header.stock_locate;
-        new_executed_order.tracking_number = header.tracking_number;
-
-        queue_.push(std::move(new_order));
-    }
-
-    void parse_cancel_order(const void* raw_data, Header& header) {
-        const CancelOrder* data = reinterpret_cast<const CancelOrder*>(raw_data);
-
-        NormalizedOrder new_order{};
-        NormalizedCancelOrder& new_cancel_order = new_order.cancel_order;
-        new_order.type = protocol::OrderType::CancelOrder;
-
-        new_cancel_order.timestamp = header.timestamp;
-        new_cancel_order.order_reference_number = header.order_reference_number;
-        new_cancel_order.shares = __builtin_bswap32(data->shares);
-        new_cancel_order.stock_locate = header.stock_locate;
-        new_cancel_order.tracking_number = header.tracking_number;
-
-        queue_.push(std::move(new_order));
-    }
+    recovery::MmapLogger& logger_;
+    uint64_t curr_seq_num{0};
 };
 
 } // namespace protocol

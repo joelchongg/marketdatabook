@@ -1,5 +1,7 @@
 #pragma once
 
+#include "utils/WalFrame.h"
+
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
@@ -10,7 +12,7 @@
 #include <unistd.h>
 #include <utility>
 
-namespace utils {
+namespace recovery {
 
 /*
 * MmapLogger class is used to log all events that occurred in the order book.
@@ -85,17 +87,29 @@ public:
     /*
     * Append assumes that there is sufficient space for all market data logging.
     * Current space allocated is 1GB. If space is not enough, this function returns false.
+    * DEPRECATED: we no longer append pure bytes but reserve WALFrames to support deterministic recovery
     */
-    bool append(void* buffer, size_t length) {
-        char* next_curr = curr_ + length;
-        if (next_curr > start_ + FILE_SIZE) [[unlikely]] {
-            return false;
+    // bool append(void* buffer, size_t length) {
+    //     char* next_curr = curr_ + length;
+    //     if (next_curr > start_ + FILE_SIZE) [[unlikely]] {
+    //         return false;
+    //     }
+
+    //     std::memcpy(curr_, buffer, length);
+    //     curr_ = next_curr;
+    //     return true;
+    // }
+
+    WalFrame* reserve_frame() {
+        if (curr_ + sizeof(WalFrame) > start_ + FILE_SIZE) [[unlikely]] {
+            return nullptr;
         }
 
-        std::memcpy(curr_, buffer, length);
-        curr_ = next_curr;
-        return true;
-    }
+        WalFrame* frame = reinterpret_cast<WalFrame*>(curr_);
+        curr_ += sizeof(WalFrame);
+
+        return frame;
+    }    
 
     /*
     * Allows user to flush current data in mmap to disk immediately
