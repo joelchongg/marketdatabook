@@ -9,21 +9,22 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Catch2)
 
-include(ParseAndAddCatchTests)
+include(Catch)
 
-# Glob all test files. 
-# CONFIGURE_DEPENDS is mandatory to prevent stale builds when adding new test files.
-file(GLOB TEST_SOURCES CONFIGURE_DEPENDS "test_*.cpp")
+file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/test_*.cpp"
+)
 
 foreach(TEST_SOURCE IN LISTS TEST_SOURCES)
-  get_filename_component(TEST_TARGET ${TEST_SOURCE} NAME_WE)
+  get_filename_component(TEST_TARGET "${TEST_SOURCE}" NAME_WE)
 
-  # Create the test executable
-  add_executable(${TEST_TARGET} ${TEST_SOURCE})
+  add_executable(${TEST_TARGET} "${TEST_SOURCE}")
+  target_link_libraries(${TEST_TARGET} PRIVATE
+    Catch2::Catch2WithMain
+    market_data_core
+  )
 
-  # Link Catch2 and your core library
-  target_link_libraries(${TEST_TARGET} PRIVATE Catch2::Catch2WithMain market_data_core)
-
-  # Register tests
-  ParseAndAddCatchTests(${TEST_TARGET})
+  catch_discover_tests(${TEST_TARGET}
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  )
 endforeach()
